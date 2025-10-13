@@ -1,4 +1,4 @@
-// simple.fx — Parallax Mapping (RGB または DXT5nm 法線対応)
+// simple.fx — Parallax Occlusion Mapping（POM）
 // UTF-8 (no BOM)
 
 //==============================
@@ -10,8 +10,14 @@ float4x4 g_matWorld;
 float4 g_eyePos; // world
 float4 g_lightDirWorld; // world の「光線の向き」。Lambert では -L を使用
 
-// Parallax
-float g_parallaxScale = 0.04f; // 0.02〜0.06 程度で調整
+// --- POM パラメータ ---
+int g_pomMinSamples = 8; // 正面での層数（少なめ）
+int g_pomMaxSamples = 24; // 斜め視での層数（多め）
+int g_pomRefineSteps = 1; // 交差後の線形リファイン回数（0〜2 推奨）
+float g_pomScale = 0.04f; // 視差スケール（大きすぎると破綻）
+
+// 互換：従来の変数（未使用だが残置）
+float g_parallaxScale = 0.04f;
 float g_parallaxBias = -0.5f * 0.04f;
 
 // 照明（拡散のみ）
@@ -63,6 +69,19 @@ sampler2D sHeight = sampler_state
     AddressV = WRAP;
 };
 
+// 追加：エフェクト定数
+float g_heightInvert = 1.0f; // 0=白が山(デフォルト), 1=反転
+
+float SampleHeight(float2 uv)
+{
+    float h = tex2D(sHeight, uv).r;
+    if (g_heightInvert > 0.5f)
+    {
+        h = 1.0f - h;
+    }
+    return h;
+}
+
 //==============================
 // 頂点 I/O
 //==============================
@@ -89,6 +108,7 @@ VSOut VS(VSIn v)
     VSOut o;
     o.pos = mul(v.pos, g_matWorldViewProj);
     o.wp = mul(v.pos, g_matWorld).xyz;
+
     // 等方スケール前提（非等方スケールなら逆転置行列を使用）
     o.wn = normalize(mul(v.normal, (float3x3) g_matWorld));
     o.uv = v.uv;
@@ -96,95 +116,195 @@ VSOut VS(VSIn v)
 }
 
 //==============================
-// TBN 構築（右手系を保証）
+// TBN 構築（右手系を保証）— 三項演算子は使わず if/else
 //==============================
-void BuildTBN(float3 P, float3 N, float2 uv, out float3 T, out float3 B, out float3 Nn)
+void BuildTBN(float3 positionWorld,
+              float3 normalWorld,
+              float2 texCoord,
+              out float3 tangent,
+              out float3 bitangent,
+              out float3 normalUnit)
 {
-    float3 dp1 = ddx(P);
-    float3 dp2 = ddy(P);
-    float2 du1 = ddx(uv);
-    float2 du2 = ddy(uv);
+    float3 dpdx = ddx(positionWorld);
+    float3 dpdy = ddy(positionWorld);
+    float2 dudx = ddx(texCoord);
+    float2 dudy = ddy(texCoord);
 
-    float3 tRaw = dp1 * du2.y - dp2 * du1.y;
-    float3 bRaw = dp2 * du1.x - dp1 * du2.x;
+    float3 tangentRaw = dpdx * dudy.y - dpdy * dudx.y;
+    float3 bitanRaw = dpdy * dudx.x - dpdx * dudy.x;
 
-    Nn = normalize(N);
-    T = normalize(tRaw - Nn * dot(Nn, tRaw)); // N に直交化
-    float sign = (dot(cross(Nn, T), normalize(bRaw)) < 0.0) ? -1.0 : 1.0;
-    B = normalize(cross(Nn, T)) * sign; // 右手系を維持
+    normalUnit = normalize(normalWorld);
+
+    float3 tangentOrtho = tangentRaw - normalUnit * dot(normalUnit, tangentRaw);
+    tangent = normalize(tangentOrtho);
+
+    float3 bitanFromCross = normalize(cross(normalUnit, tangent));
+    float handednessCheck = dot(cross(normalUnit, tangent), normalize(bitanRaw));
+
+    if (handednessCheck < 0.0f)
+    {
+        bitangent = -bitanFromCross;
+    }
+    else
+    {
+        bitangent = bitanFromCross;
+    }
 }
 
 //==============================
 // 法線デコード
-//   g_normalEncoding=0: RGB (rgb*2-1)
-//   g_normalEncoding=1: DXT5nm (A=nx, G=ny, z は再構成)
 //==============================
-float3 DecodeNormal(float4 t)
+float3 DecodeNormal(float4 nTexel)
 {
-    float3 n;
-    if (g_normalEncoding > 0.5)
+    float3 normalTs;
+
+    if (g_normalEncoding > 0.5f)
     {
-        float nx = t.a * 2.0 - 1.0;
-        float ny = t.g * 2.0 - 1.0;
-        nx = lerp(nx, -nx, saturate(g_flipRed));
-        ny = lerp(ny, -ny, saturate(g_flipGreen));
-        float nz = sqrt(saturate(1.0 - nx * nx - ny * ny));
-        n = float3(nx, ny, nz);
+        float nx = nTexel.a * 2.0f - 1.0f;
+        float ny = nTexel.g * 2.0f - 1.0f;
+
+        if (g_flipRed > 0.5f)
+            nx = -nx;
+        if (g_flipGreen > 0.5f)
+            ny = -ny;
+
+        float nz2 = 1.0f - nx * nx - ny * ny;
+        float nz = sqrt(saturate(nz2));
+        normalTs = float3(nx, ny, nz);
     }
     else
     {
-        n = t.rgb * 2.0 - 1.0;
-        n.x = lerp(n.x, -n.x, saturate(g_flipRed));
-        n.y = lerp(n.y, -n.y, saturate(g_flipGreen));
+        normalTs = nTexel.rgb * 2.0f - 1.0f;
+
+        if (g_flipRed > 0.5f)
+            normalTs.x = -normalTs.x;
+        if (g_flipGreen > 0.5f)
+            normalTs.y = -normalTs.y;
     }
-    return normalize(n);
+
+    return normalize(normalTs);
+}
+// ループ回数はコンパイル時定数に固定（SM2.0向け）
+static const int POM_MAX_STEPS = 24; // 12〜24 で調整
+static const int POM_REFINE_STEPS = 1; // 0〜2
+
+float2 ParallaxOcclusionOffset(float2 baseUv, float3 viewTs)
+{
+    float3 viewDir = normalize(viewTs);
+    float viewZ = max(abs(viewDir.z), 1e-3f);
+
+    // 斜め視ほど多く。ここは実行時に変わってOK（ループ回数は固定なので安全）
+    float desiredStepsF = lerp((float) g_pomMinSamples, (float) g_pomMaxSamples, 1.0f - saturate(viewZ));
+    int desiredSteps = (int) (desiredStepsF + 0.5f);
+
+    if (desiredSteps < 1)
+    {
+        desiredSteps = 1;
+    }
+    if (desiredSteps > POM_MAX_STEPS)
+    {
+        desiredSteps = POM_MAX_STEPS;
+    }
+
+    float2 parallaxDir = (viewDir.xy / viewZ) * g_pomScale;
+    float2 uvStep = parallaxDir / (float) desiredSteps;
+
+    float layerHeight = 1.0f;
+    float layerStep = 1.0f / (float) desiredSteps;
+
+    float2 currentUv = baseUv;
+    float2 previousUv = baseUv;
+
+    float currentHeight = SampleHeight(currentUv);
+
+    // 固定回数で回して中でbreak（SM2.0でもOK）
+    [unroll(POM_MAX_STEPS)]
+    for (int i = 0; i < POM_MAX_STEPS; i++)
+    {
+        if (i >= desiredSteps)
+        {
+            break;
+        }
+        if (currentHeight >= layerHeight)
+        {
+            break;
+        }
+
+        previousUv = currentUv;
+        currentUv += uvStep;
+        layerHeight -= layerStep;
+        currentHeight = SampleHeight(currentUv);
+    }
+
+    // 交差点の簡易リファイン（固定回数）
+    [unroll(POM_REFINE_STEPS)]
+    for (int r = 0; r < POM_REFINE_STEPS; r++)
+    {
+        float previousHeight = tex2D(sHeight, previousUv).r;
+        float denominator = currentHeight - previousHeight;
+
+        float t = 0.5f;
+        if (abs(denominator) > 1e-5f)
+        {
+            t = saturate((layerHeight - previousHeight) / denominator);
+        }
+
+        float2 refinedUv = lerp(previousUv, currentUv, t);
+
+        currentUv = refinedUv;
+        currentHeight = tex2D(sHeight, currentUv).r;
+        previousUv = lerp(previousUv, currentUv, 0.5f);
+    }
+
+    return frac(currentUv);
 }
 
 //==============================
 // PS
 //==============================
-float4 PS(VSOut i) : COLOR
+float4 PS_POM(VSOut i) : COLOR
 {
     // UV 反転
-    float2 baseUV;
-    baseUV.x = lerp(i.uv.x, 1.0 - i.uv.x, saturate(g_flipU));
-    baseUV.y = lerp(i.uv.y, 1.0 - i.uv.y, saturate(g_flipV));
+    float2 baseUv;
+    baseUv.x = lerp(i.uv.x, 1.0f - i.uv.x, saturate(g_flipU));
+    baseUv.y = lerp(i.uv.y, 1.0f - i.uv.y, saturate(g_flipV));
 
     // TBN と view（tangent space）
-    float3 T, B, Nw;
-    BuildTBN(i.wp, i.wn, baseUV, T, B, Nw);
-    float3x3 TBN = float3x3(T, B, Nw);
+    float3 tangent, bitangent, normalWorldUnit;
+    BuildTBN(i.wp, i.wn, baseUv, tangent, bitangent, normalWorldUnit);
+    float3x3 tbn = float3x3(tangent, bitangent, normalWorldUnit);
 
-    float3 Vw = g_eyePos.xyz - i.wp;
-    float3 Vts = normalize(mul(Vw, transpose(TBN)));
+    float3 viewWorld = g_eyePos.xyz - i.wp;
+    float3 viewTs = normalize(mul(viewWorld, transpose(tbn)));
 
-    // Parallax UV オフセット
-    float h = tex2D(sHeight, baseUV).r;
-    float2 uvP = baseUV + (h * g_parallaxScale + g_parallaxBias) * (Vts.xy / max(abs(Vts.z), 1e-3));
+    // --- POM UV ---
+    float2 uvParallax = ParallaxOcclusionOffset(baseUv, viewTs);
 
     // サンプル
-    float3 albedo = tex2D(sColor, uvP).rgb;
-    float4 nTex = tex2D(sNormal, uvP);
-    float3 nTS = DecodeNormal(nTex);
-    float3 nW = normalize(mul(nTS, TBN));
+    float3 albedo = tex2D(sColor, uvParallax).rgb;
+    float4 nTex = tex2D(sNormal, uvParallax);
+    float3 nTs = DecodeNormal(nTex);
+    float3 nW = normalize(mul(nTs, tbn));
 
     // Lambert（光線の向き Lw に対して -Lw を使用）
-    float3 Lw = normalize(g_lightDirWorld.xyz);
-    float NdotL = saturate(dot(nW, -Lw));
-    float3 diff = g_lightColor * (NdotL * g_diffuseGain);
+    float3 lightWorld = normalize(g_lightDirWorld.xyz);
+    float ndotl = saturate(dot(nW, lightWorld));
+    float3 diffuse = g_lightColor * (ndotl * g_diffuseGain);
 
-    float3 color = albedo * (g_ambientColor + diff);
-    return float4(saturate(color), 1.0);
+    float3 color = albedo * (g_ambientColor + diffuse);
+    return float4(saturate(color), 1.0f);
 }
 
 //==============================
 // Technique
 //==============================
-technique Technique_Parallax
+technique Technique_ParallaxOcclusion
 {
     pass P0
     {
         VertexShader = compile vs_3_0 VS();
-        PixelShader = compile ps_3_0 PS();
+        PixelShader = compile ps_3_0 PS_POM();
     }
 }
+
+//（互換：元のTechnique名を残したい場合はここに旧PSを置く）

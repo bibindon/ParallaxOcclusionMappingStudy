@@ -23,8 +23,8 @@
     <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>
-    <CustomBuild Include="simple.fx">
+    <FxCompile Include="simple.fx">
       <Filter>リソース ファイル</Filter>
-    </CustomBuild>
+    </FxCompile>
   </ItemGroup>
 </Project>

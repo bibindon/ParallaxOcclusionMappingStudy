@@ -150,7 +150,7 @@ void InitD3D(HWND hWnd)
 
     // cube.x を読み込み
     LPD3DXBUFFER pMtrlBuf = NULL;
-    hr = D3DXLoadMeshFromX(_T("cube.x"), D3DXMESH_SYSTEMMEM, g_pd3dDevice,
+    hr = D3DXLoadMeshFromX(_T("untitled.blend.x"), D3DXMESH_SYSTEMMEM, g_pd3dDevice,
                            NULL, &pMtrlBuf, NULL, &g_dwNumMaterials, &g_pMesh);
     assert(hr == S_OK);
 
@@ -249,30 +249,32 @@ void Render()
     TCHAR temp[12];
 //    TextDraw(g_pFont, temp, 8, 8);
 
-    // エフェクト定数
     g_pEffect->SetMatrix("g_matWorldViewProj", &WVP);
     g_pEffect->SetMatrix("g_matWorld", &World);
 
     D3DXVECTOR4 eyePos(eye.x, eye.y, eye.z, 1.0f);
     g_pEffect->SetVector("g_eyePos", &eyePos);
 
-    D3DXVECTOR4 lightDir = D3DXVECTOR4(1.0f * sinf(f2), 1.0f * sinf(f2), 1.0f * cosf(f2), 0.0f); // ワールド方向
+    D3DXVECTOR4 lightDir = D3DXVECTOR4(1.0f * sinf(f2), 1.0f * sinf(f2), 1.0f * cosf(f2), 0.0f);
     D3DXVec4Normalize(&lightDir, &lightDir);
     g_pEffect->SetVector("g_lightDirWorld", &lightDir);
 
-    g_pEffect->SetFloat("g_parallaxScale", 0.04f); // 0.02〜0.06 で調整
-    g_pEffect->SetFloat("g_parallaxBias", -0.02f); // 通常 -0.5*scale
+    // --- POM parameters ---
+    g_pEffect->SetInt("g_pomMinSamples", 8);
+    g_pEffect->SetInt("g_pomMaxSamples", 24);
+    g_pEffect->SetInt("g_pomRefineSteps", 1);   // 0〜2
+    g_pEffect->SetFloat("g_pomScale", 0.04f);  // 0.02〜0.06 で調整
 
     g_pEffect->SetTexture("g_texNormal", g_pNormalTex);
     g_pEffect->SetTexture("g_texHeight", g_pHeightTex);
 
-    g_pEffect->SetTechnique("Technique_Parallax");
+    // ★ テクニック名を POM に
+    g_pEffect->SetTechnique("Technique_ParallaxOcclusion");
 
     UINT nPass = 0;
     g_pEffect->Begin(&nPass, 0);
     g_pEffect->BeginPass(0);
 
-    // サブセット毎にアルベドをセット
     for (DWORD i = 0; i < g_dwNumMaterials; ++i)
     {
         g_pEffect->SetTexture("g_texColor", g_pTextures[i]);
