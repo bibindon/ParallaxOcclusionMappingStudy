@@ -300,7 +300,7 @@ static void Render()
     g_pEffect->SetInt("g_pomMinSamples", 8);
     g_pEffect->SetInt("g_pomMaxSamples", 24);
     g_pEffect->SetInt("g_pomRefineSteps", 1);
-    g_pEffect->SetFloat("g_pomScale", 0.04f);
+    g_pEffect->SetFloat("g_pomScale", 0.1f);
 
     g_pEffect->SetTexture("g_texNormal", g_pNormalTex);
     g_pEffect->SetTexture("g_texHeight", g_pHeightTex);
