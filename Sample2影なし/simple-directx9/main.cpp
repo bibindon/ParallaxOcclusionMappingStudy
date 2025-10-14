@@ -198,10 +198,10 @@ static void InitD3D(HWND hWnd)
     materialBuffer->Release();
 
     // Parallax resources (normal / height)
-    hResult = D3DXCreateTextureFromFileW(g_pD3dDevice, L"normalMap.png", &g_pNormalTex);
+    hResult = D3DXCreateTextureFromFileW(g_pD3dDevice, L"rocksNormal.png", &g_pNormalTex);
     assert(SUCCEEDED(hResult));
 
-    hResult = D3DXCreateTextureFromFileW(g_pD3dDevice, L"bumpMap.png", &g_pHeightTex);
+    hResult = D3DXCreateTextureFromFileW(g_pD3dDevice, L"rocksBump.png", &g_pHeightTex);
     assert(SUCCEEDED(hResult));
 
     // Effect
