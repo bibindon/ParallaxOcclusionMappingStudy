@@ -7,277 +7,317 @@
 
 #include <d3d9.h>
 #include <d3dx9.h>
-#include <string>
 #include <tchar.h>
 #include <cassert>
 #include <crtdbg.h>
+#include <string>
 #include <vector>
 
-#define SAFE_RELEASE(p) { if (p) { (p)->Release(); (p) = NULL; } }
+// -----------------------------------------------------------------------------
+// Helpers
+// -----------------------------------------------------------------------------
+#define SAFE_RELEASE(p) do { if (p) { (p)->Release(); (p) = NULL; } } while(0)
 
-const int WINDOW_SIZE_W = 1600;
-const int WINDOW_SIZE_H = 900;
+// -----------------------------------------------------------------------------
+// Constants
+// -----------------------------------------------------------------------------
+static const int WINDOW_SIZE_W = 1600;
+static const int WINDOW_SIZE_H = 900;
 
+// -----------------------------------------------------------------------------
+// Globals
+// -----------------------------------------------------------------------------
 LPDIRECT3D9 g_pD3D = NULL;
-LPDIRECT3DDEVICE9 g_pd3dDevice = NULL;
-LPD3DXFONT g_pFont = NULL;
+LPDIRECT3DDEVICE9 g_pD3dDevice = NULL;
 LPD3DXMESH g_pMesh = NULL;
-std::vector<D3DMATERIAL9> g_pMaterials;
-std::vector<LPDIRECT3DTEXTURE9> g_pTextures;
-DWORD g_dwNumMaterials = 0;
+std::vector<D3DMATERIAL9> g_materials;
+std::vector<LPDIRECT3DTEXTURE9> g_textures;
+DWORD g_numMaterials = 0;
 LPD3DXEFFECT g_pEffect = NULL;
-bool g_bClose = false;
+bool g_shouldClose = false;
 
-// 追加：法線＆高さマップ
+// Parallax / POM textures
 LPDIRECT3DTEXTURE9 g_pNormalTex = NULL;
 LPDIRECT3DTEXTURE9 g_pHeightTex = NULL;
 
-static void TextDraw(LPD3DXFONT pFont, TCHAR* text, int X, int Y);
+// -----------------------------------------------------------------------------
+// Forward Declarations
+// -----------------------------------------------------------------------------
 static void InitD3D(HWND hWnd);
 static void Cleanup();
 static void Render();
-LRESULT WINAPI MsgProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+static LRESULT WINAPI MsgProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+
+// -----------------------------------------------------------------------------
+// Entry Point
+// -----------------------------------------------------------------------------
+extern int WINAPI _tWinMain(_In_ HINSTANCE hInstance,
+                            _In_opt_ HINSTANCE,
+                            _In_ LPTSTR,
+                            _In_ int);
 
 int WINAPI _tWinMain(_In_ HINSTANCE hInstance,
-                     _In_opt_ HINSTANCE hPrevInstance,
-                     _In_ LPTSTR lpCmdLine,
-                     _In_ int nCmdShow)
+                     _In_opt_ HINSTANCE,
+                     _In_ LPTSTR,
+                     _In_ int)
 {
     _CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF);
 
-    WNDCLASSEX wc { };
-    wc.cbSize = sizeof(WNDCLASSEX);
-    wc.style = CS_CLASSDC;
-    wc.lpfnWndProc = MsgProc;
-    wc.cbClsExtra = 0;
-    wc.cbWndExtra = 0;
-    wc.hInstance = GetModuleHandle(NULL);
-    wc.hIcon = NULL;
-    wc.hCursor = NULL;
-    wc.hbrBackground = NULL;
-    wc.lpszMenuName = NULL;
-    wc.lpszClassName = _T("Window1");
-    wc.hIconSm = NULL;
+    WNDCLASSEX windowClass = { 0 };
+    windowClass.cbSize = sizeof(WNDCLASSEX);
+    windowClass.style = CS_CLASSDC;
+    windowClass.lpfnWndProc = MsgProc;
+    windowClass.hInstance = GetModuleHandle(NULL);
+    windowClass.lpszClassName = _T("Window1");
 
-    ATOM atom = RegisterClassEx(&wc);
+    ATOM atom = RegisterClassEx(&windowClass);
     assert(atom != 0);
 
     RECT rect;
     SetRect(&rect, 0, 0, WINDOW_SIZE_W, WINDOW_SIZE_H);
     AdjustWindowRect(&rect, WS_OVERLAPPEDWINDOW, FALSE);
-    rect.right = rect.right - rect.left;
-    rect.bottom = rect.bottom - rect.top;
-    rect.top = 0;
-    rect.left = 0;
+
+    int windowWidth = rect.right - rect.left;
+    int windowHeight = rect.bottom - rect.top;
 
     HWND hWnd = CreateWindow(_T("Window1"),
                              _T("Hello DirectX9 World !!"),
                              WS_OVERLAPPEDWINDOW,
                              CW_USEDEFAULT,
                              CW_USEDEFAULT,
-                             rect.right,
-                             rect.bottom,
+                             windowWidth,
+                             windowHeight,
                              NULL,
                              NULL,
-                             wc.hInstance,
+                             windowClass.hInstance,
                              NULL);
 
     InitD3D(hWnd);
     ShowWindow(hWnd, SW_SHOWDEFAULT);
     UpdateWindow(hWnd);
 
-    MSG msg;
+    MSG message;
     while (true)
     {
-        if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
-            DispatchMessage(&msg);
+        if (PeekMessage(&message, NULL, 0, 0, PM_REMOVE))
+        {
+            TranslateMessage(&message);
+            DispatchMessage(&message);
         }
-        else {
+        else
+        {
             Sleep(16);
             Render();
         }
-        if (g_bClose) break;
+
+        if (g_shouldClose)
+        {
+            break;
+        }
     }
 
     Cleanup();
-    UnregisterClass(_T("Window1"), wc.hInstance);
+    UnregisterClass(_T("Window1"), windowClass.hInstance);
     return 0;
 }
 
-void TextDraw(LPD3DXFONT pFont, TCHAR* text, int X, int Y)
+// -----------------------------------------------------------------------------
+// D3D Init
+// -----------------------------------------------------------------------------
+static void InitD3D(HWND hWnd)
 {
-    RECT rect = { X, Y, 0, 0 };
-    HRESULT hResult = pFont->DrawText(NULL, text, -1, &rect,
-                                      DT_LEFT | DT_NOCLIP,
-                                      D3DCOLOR_ARGB(255, 0, 0, 0));
-    assert((int)hResult >= 0);
-}
-
-void InitD3D(HWND hWnd)
-{
-    HRESULT hr = E_FAIL;
+    HRESULT hResult = E_FAIL;
 
     g_pD3D = Direct3DCreate9(D3D_SDK_VERSION);
     assert(g_pD3D != NULL);
 
-    D3DPRESENT_PARAMETERS d3dpp = {};
-    d3dpp.Windowed = TRUE;
-    d3dpp.SwapEffect = D3DSWAPEFFECT_DISCARD;
-    d3dpp.BackBufferFormat = D3DFMT_UNKNOWN;
-    d3dpp.BackBufferCount = 1;
-    d3dpp.MultiSampleType = D3DMULTISAMPLE_NONE;
-    d3dpp.MultiSampleQuality = 0;
-    d3dpp.EnableAutoDepthStencil = TRUE;
-    d3dpp.AutoDepthStencilFormat = D3DFMT_D16;
-    d3dpp.hDeviceWindow = hWnd;
-    d3dpp.PresentationInterval = D3DPRESENT_INTERVAL_DEFAULT;
+    D3DPRESENT_PARAMETERS presentParams = { 0 };
+    presentParams.Windowed = TRUE;
+    presentParams.SwapEffect = D3DSWAPEFFECT_DISCARD;
+    presentParams.BackBufferFormat = D3DFMT_UNKNOWN;
+    presentParams.BackBufferCount = 1;
+    presentParams.MultiSampleType = D3DMULTISAMPLE_NONE;
+    presentParams.MultiSampleQuality = 0;
+    presentParams.EnableAutoDepthStencil = TRUE;
+    presentParams.AutoDepthStencilFormat = D3DFMT_D16;
+    presentParams.hDeviceWindow = hWnd;
+    presentParams.PresentationInterval = D3DPRESENT_INTERVAL_DEFAULT;
 
-    hr = g_pD3D->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, hWnd,
-                              D3DCREATE_HARDWARE_VERTEXPROCESSING,
-                              &d3dpp, &g_pd3dDevice);
-    if (FAILED(hr)) {
-        hr = g_pD3D->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, hWnd,
-                                  D3DCREATE_SOFTWARE_VERTEXPROCESSING,
-                                  &d3dpp, &g_pd3dDevice);
-        assert(hr == S_OK);
+    hResult = g_pD3D->CreateDevice(D3DADAPTER_DEFAULT,
+                                   D3DDEVTYPE_HAL,
+                                   hWnd,
+                                   D3DCREATE_HARDWARE_VERTEXPROCESSING,
+                                   &presentParams,
+                                   &g_pD3dDevice);
+    if (FAILED(hResult))
+    {
+        hResult = g_pD3D->CreateDevice(D3DADAPTER_DEFAULT,
+                                       D3DDEVTYPE_HAL,
+                                       hWnd,
+                                       D3DCREATE_SOFTWARE_VERTEXPROCESSING,
+                                       &presentParams,
+                                       &g_pD3dDevice);
+        assert(SUCCEEDED(hResult));
     }
 
-    hr = D3DXCreateFont(g_pd3dDevice, 20, 0, FW_HEAVY, 1, FALSE,
-                        SHIFTJIS_CHARSET, OUT_TT_ONLY_PRECIS,
-                        CLEARTYPE_NATURAL_QUALITY, FF_DONTCARE,
-                        _T("ＭＳ ゴシック"), &g_pFont);
-    assert(hr == S_OK);
+    // Load mesh (materials & textures)
+    LPD3DXBUFFER materialBuffer = NULL;
+    hResult = D3DXLoadMeshFromX(_T("untitled.blend.x"),
+                                D3DXMESH_SYSTEMMEM,
+                                g_pD3dDevice,
+                                NULL,
+                                &materialBuffer,
+                                NULL,
+                                &g_numMaterials,
+                                &g_pMesh);
+    assert(SUCCEEDED(hResult));
 
-    // cube.x を読み込み
-    LPD3DXBUFFER pMtrlBuf = NULL;
-    hr = D3DXLoadMeshFromX(_T("untitled.blend.x"), D3DXMESH_SYSTEMMEM, g_pd3dDevice,
-                           NULL, &pMtrlBuf, NULL, &g_dwNumMaterials, &g_pMesh);
-    assert(hr == S_OK);
+    D3DXMATERIAL* materials = reinterpret_cast<D3DXMATERIAL*>(materialBuffer->GetBufferPointer());
+    g_materials.resize(g_numMaterials);
+    g_textures.resize(g_numMaterials);
 
-    D3DXMATERIAL* mats = (D3DXMATERIAL*)pMtrlBuf->GetBufferPointer();
-    g_pMaterials.resize(g_dwNumMaterials);
-    g_pTextures.resize(g_dwNumMaterials);
-
-    for (DWORD i = 0; i < g_dwNumMaterials; i++)
+    for (DWORD i = 0; i < g_numMaterials; ++i)
     {
-        g_pMaterials[i] = mats[i].MatD3D;
-        g_pMaterials[i].Ambient = g_pMaterials[i].Diffuse;
-        g_pTextures[i] = NULL;
+        g_materials[i] = materials[i].MatD3D;
+        g_materials[i].Ambient = g_materials[i].Diffuse;
+        g_textures[i] = NULL;
 
-        std::string path(mats[i].pTextureFilename);
-        if (!path.empty())
+        std::string texturePath;
+
+        if (materials[i].pTextureFilename != nullptr)
         {
-#ifndef UNICODE
-            hr = D3DXCreateTextureFromFileA(g_pd3dDevice, path.c_str(), &g_pTextures[i]);
-#else
-            int len = MultiByteToWideChar(CP_ACP, 0, path.c_str(), -1, nullptr, 0);
-            std::wstring wpath(len, 0);
-            MultiByteToWideChar(CP_ACP, 0, path.c_str(), -1, &wpath[0], len);
-            hr = D3DXCreateTextureFromFileW(g_pd3dDevice, wpath.c_str(), &g_pTextures[i]);
-#endif
-            assert(hr == S_OK);
+            texturePath = materials[i].pTextureFilename;
+        }
+
+        if (!texturePath.empty())
+        {
+            hResult = D3DXCreateTextureFromFileA(g_pD3dDevice, texturePath.c_str(), &g_textures[i]);
+            assert(SUCCEEDED(hResult));
         }
     }
-    pMtrlBuf->Release();
+    materialBuffer->Release();
 
-    // Parallax 用テクスチャ（同フォルダに normalMap.png / bumpMap.png を置く）
-#ifndef UNICODE
-    hr = D3DXCreateTextureFromFileA(g_pd3dDevice, "normalMap.png", &g_pNormalTex);
-    assert(hr == S_OK);
-    hr = D3DXCreateTextureFromFileA(g_pd3dDevice, "bumpMap.png", &g_pHeightTex);
-    assert(hr == S_OK);
-#else
-    hr = D3DXCreateTextureFromFileW(g_pd3dDevice, L"normalMap.png", &g_pNormalTex);
-    assert(hr == S_OK);
-    hr = D3DXCreateTextureFromFileW(g_pd3dDevice, L"bumpMap.png", &g_pHeightTex);
-    assert(hr == S_OK);
-#endif
+    // Parallax resources (normal / height)
+    hResult = D3DXCreateTextureFromFileW(g_pD3dDevice, L"normalMap.png", &g_pNormalTex);
+    assert(SUCCEEDED(hResult));
 
-    // エフェクト
-    hr = D3DXCreateEffectFromFile(g_pd3dDevice, _T("simple.fx"),
-                                  NULL, NULL, D3DXSHADER_DEBUG,
-                                  NULL, &g_pEffect, NULL);
-    assert(hr == S_OK);
+    hResult = D3DXCreateTextureFromFileW(g_pD3dDevice, L"bumpMap.png", &g_pHeightTex);
+    assert(SUCCEEDED(hResult));
+
+    // Effect
+    hResult = D3DXCreateEffectFromFile(g_pD3dDevice,
+                                       _T("simple.fx"),
+                                       NULL,
+                                       NULL,
+                                       D3DXSHADER_DEBUG,
+                                       NULL,
+                                       &g_pEffect,
+                                       NULL);
+    assert(SUCCEEDED(hResult));
 }
 
-void Cleanup()
+// -----------------------------------------------------------------------------
+// Cleanup
+// -----------------------------------------------------------------------------
+static void Cleanup()
 {
-    for (auto& t : g_pTextures) SAFE_RELEASE(t);
+    for (size_t i = 0; i < g_textures.size(); ++i)
+    {
+        SAFE_RELEASE(g_textures[i]);
+    }
+
     SAFE_RELEASE(g_pNormalTex);
     SAFE_RELEASE(g_pHeightTex);
     SAFE_RELEASE(g_pMesh);
     SAFE_RELEASE(g_pEffect);
-    SAFE_RELEASE(g_pFont);
-    SAFE_RELEASE(g_pd3dDevice);
+    SAFE_RELEASE(g_pD3dDevice);
     SAFE_RELEASE(g_pD3D);
 }
 
-void Render()
+// -----------------------------------------------------------------------------
+// Render
+// -----------------------------------------------------------------------------
+static void Render()
 {
-    HRESULT hr = E_FAIL;
+    HRESULT hResult = E_FAIL;
 
-    static float f = 0.0f;
-    f += 0.01f;
+    static float angleCamera = 0.0f;
+    angleCamera += 0.01f;
 
-    static float f2 = 0.0f;
-    f2 += 0.02f;
+    static float angleLight = 0.0f;
+    angleLight += 0.02f;
 
-    // 行列
-    D3DXMATRIX World, View, Proj, WVP;
-    D3DXMatrixIdentity(&World);
+    // Matrices
+    D3DXMATRIX worldMatrix;
+    D3DXMATRIX viewMatrix;
+    D3DXMATRIX projMatrix;
+    D3DXMATRIX worldViewProj;
 
-    D3DXMatrixPerspectiveFovLH(&Proj, D3DXToRadian(45),
-                               (float)WINDOW_SIZE_W / WINDOW_SIZE_H,
-                               1.0f, 10000.0f);
+    D3DXMatrixIdentity(&worldMatrix);
 
-    D3DXVECTOR3 eye(3.f * sinf(f), 2.f, -3.f * cosf(f));
-    D3DXVECTOR3 at(0, 0, 0);
-    D3DXVECTOR3 up(0, 1, 0);
-    D3DXMatrixLookAtLH(&View, &eye, &at, &up);
+    D3DXMatrixPerspectiveFovLH(&projMatrix,
+                               D3DXToRadian(45.0f),
+                               static_cast<float>(WINDOW_SIZE_W) / static_cast<float>(WINDOW_SIZE_H),
+                               1.0f,
+                               10000.0f);
 
-    WVP = World * View * Proj;
+    D3DXVECTOR3 eyePosition(3.0f * sinf(angleCamera), 2.0f, -3.0f * cosf(angleCamera));
+    D3DXVECTOR3 targetPosition(0.0f, 0.0f, 0.0f);
+    D3DXVECTOR3 upDirection(0.0f, 1.0f, 0.0f);
 
-    // クリア
-    hr = g_pd3dDevice->Clear(0, NULL,
-                             D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER,
-                             D3DCOLOR_XRGB(100, 100, 100), 1.0f, 0);
-    assert(hr == S_OK);
+    D3DXMatrixLookAtLH(&viewMatrix, &eyePosition, &targetPosition, &upDirection);
 
-    hr = g_pd3dDevice->BeginScene(); assert(hr == S_OK);
+    worldViewProj = worldMatrix * viewMatrix * projMatrix;
 
-    //TextDraw(g_pFont, _T("Parallax Mapping Sample"), 8, 8);
-    TCHAR temp[12];
-//    TextDraw(g_pFont, temp, 8, 8);
+    // Clear
+    hResult = g_pD3dDevice->Clear(0,
+                                  NULL,
+                                  D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER,
+                                  D3DCOLOR_XRGB(100, 100, 100),
+                                  1.0f,
+                                  0);
+    assert(SUCCEEDED(hResult));
 
-    g_pEffect->SetMatrix("g_matWorldViewProj", &WVP);
-    g_pEffect->SetMatrix("g_matWorld", &World);
+    hResult = g_pD3dDevice->BeginScene();
+    assert(SUCCEEDED(hResult));
 
-    D3DXVECTOR4 eyePos(eye.x, eye.y, eye.z, 1.0f);
-    g_pEffect->SetVector("g_eyePos", &eyePos);
+    // Effect constants
+    g_pEffect->SetMatrix("g_matWorldViewProj", &worldViewProj);
+    g_pEffect->SetMatrix("g_matWorld", &worldMatrix);
 
-    D3DXVECTOR4 lightDir = D3DXVECTOR4(1.0f * sinf(f2), 1.0f * sinf(f2), 1.0f * cosf(f2), 0.0f);
+    D3DXVECTOR4 eyePos4(eyePosition.x, eyePosition.y, eyePosition.z, 1.0f);
+    g_pEffect->SetVector("g_eyePos", &eyePos4);
+
+    // World-space light direction (normalized)
+    D3DXVECTOR4 lightDir(1.0f * sinf(angleLight),
+                         1.0f * sinf(angleLight),
+                         1.0f * cosf(angleLight),
+                         0.0f);
     D3DXVec4Normalize(&lightDir, &lightDir);
     g_pEffect->SetVector("g_lightDirWorld", &lightDir);
 
-    // --- POM parameters ---
+    // POM parameters (if the technique uses them)
     g_pEffect->SetInt("g_pomMinSamples", 8);
     g_pEffect->SetInt("g_pomMaxSamples", 24);
-    g_pEffect->SetInt("g_pomRefineSteps", 1);   // 0〜2
-    g_pEffect->SetFloat("g_pomScale", 0.04f);  // 0.02〜0.06 で調整
+    g_pEffect->SetInt("g_pomRefineSteps", 1);
+    g_pEffect->SetFloat("g_pomScale", 0.04f);
 
     g_pEffect->SetTexture("g_texNormal", g_pNormalTex);
     g_pEffect->SetTexture("g_texHeight", g_pHeightTex);
 
-    // ★ テクニック名を POM に
-    g_pEffect->SetTechnique("Technique_ParallaxOcclusion");
+    // Choose technique with graceful fallback
+    D3DXHANDLE techParallax = g_pEffect->GetTechniqueByName("Technique_ParallaxOcclusion");
 
-    UINT nPass = 0;
-    g_pEffect->Begin(&nPass, 0);
+    g_pEffect->SetTechnique(techParallax);
+
+    UINT numPasses = 0;
+    g_pEffect->Begin(&numPasses, 0);
     g_pEffect->BeginPass(0);
 
-    for (DWORD i = 0; i < g_dwNumMaterials; ++i)
+    // Draw subsets with their textures
+    for (DWORD i = 0; i < g_numMaterials; ++i)
     {
-        g_pEffect->SetTexture("g_texColor", g_pTextures[i]);
+        g_pEffect->SetTexture("g_texColor", g_textures[i]);
         g_pEffect->CommitChanges();
         g_pMesh->DrawSubset(i);
     }
@@ -285,18 +325,24 @@ void Render()
     g_pEffect->EndPass();
     g_pEffect->End();
 
-    g_pd3dDevice->EndScene();
-    g_pd3dDevice->Present(NULL, NULL, NULL, NULL);
+    g_pD3dDevice->EndScene();
+    g_pD3dDevice->Present(NULL, NULL, NULL, NULL);
 }
 
-LRESULT WINAPI MsgProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
+// -----------------------------------------------------------------------------
+// Window Proc
+// -----------------------------------------------------------------------------
+static LRESULT WINAPI MsgProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     switch (msg)
     {
     case WM_DESTROY:
+    {
         PostQuitMessage(0);
-        g_bClose = true;
+        g_shouldClose = true;
         return 0;
     }
+    }
+
     return DefWindowProc(hWnd, msg, wParam, lParam);
 }
