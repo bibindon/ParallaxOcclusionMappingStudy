@@ -487,7 +487,7 @@ static void Render()
     g_pEffect->SetInt("g_pomMinSamples", 24);
     g_pEffect->SetInt("g_pomMaxSamples", 48);
     g_pEffect->SetInt("g_pomRefineSteps", 2);
-    g_pEffect->SetFloat("g_pomScale", 0.04f);  // 0.1f から弱めに
+    g_pEffect->SetFloat("g_pomScale", 0.1f);  // 0.1f から弱めに
 
     // テクスチャ
     g_pEffect->SetTexture("g_texNormal", g_pNormalTex);

@@ -36,7 +36,7 @@ float g_flipRed = 0.0f; // 1 -> flip normal.x
 float g_flipGreen = 0.0f; // 1 -> flip normal.y
 
 // Height polarity (0 = white is high / 1 = invert)
-float g_heightInvert = 1.0f;
+float g_heightInvert = 0.0f;
 
 // Stability epsilons (no scientific notation)
 static const float g_parallaxEpsilon = 0.001f; // min abs(z) when projecting
