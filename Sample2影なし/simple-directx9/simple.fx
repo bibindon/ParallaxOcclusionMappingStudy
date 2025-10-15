@@ -1,11 +1,9 @@
 // simple.fx — Parallax Occlusion Mapping (POM)
-// Requirements per user:
+// Vertex Tangent/Binormal version
 // - Always-on POM (no LOD/mip gating)
-// - No self-shadow (occlusion) term
-// - No specular term
+// - No self-shadow term, no specular term
 // - in/out parameter style, no one-letter variables, no scientific-notation literals
-// - "TS" naming replaced with "UV" where appropriate
-//
+// - "TS" naming replaced with "UV"
 // UTF-8 (no BOM)
 
 //==================================================
@@ -137,63 +135,47 @@ float3 DecodeNormal(float4 sampledTexel)
 
 //==================================================
 // Vertex Shader (in/out parameters)
-//   Output: POSITION0, TEXCOORD0=WorldPos, TEXCOORD1=WorldNorm, TEXCOORD2=UV
+//   Input includes TANGENT0 and BINORMAL0 from the mesh
+//   Output: POSITION0, TEXCOORD0=WorldPos, TEXCOORD1=WorldNorm,
+//           TEXCOORD2=UV, TEXCOORD3=WorldTan, TEXCOORD4=WorldBin
 //==================================================
 void VS(float4 inPos : POSITION0,
         float3 inNormal : NORMAL0,
         float2 inUV : TEXCOORD0,
+        float3 inTangent : TANGENT0,
+        float3 inBinormal : BINORMAL0,
 
         out float4 outPos : POSITION0,
         out float3 outWorldPos : TEXCOORD0,
         out float3 outWorldNorm : TEXCOORD1,
-        out float2 outUV : TEXCOORD2)
+        out float2 outUV : TEXCOORD2,
+        out float3 outWorldTan : TEXCOORD3,
+        out float3 outWorldBin : TEXCOORD4)
 {
     outPos = mul(inPos, g_matWorldViewProj);
     outWorldPos = mul(inPos, g_matWorld).xyz;
 
-    // Assuming uniform scaling; if not, use inverse-transpose
-    float3x3 world3x3 = (float3x3) g_matWorld;
+    float3x3 world3x3 = (float3x3) g_matWorld; // uniform scale assumed
+
     outWorldNorm = normalize(mul(inNormal, world3x3));
+    outWorldTan = normalize(mul(inTangent, world3x3));
+    outWorldBin = normalize(mul(inBinormal, world3x3));
 
-    outUV = inUV;
-}
+    // Re-orthogonalize to keep a stable right-handed basis
+    outWorldTan = normalize(outWorldTan - outWorldNorm * dot(outWorldNorm, outWorldTan));
 
-//==================================================
-// TBN from screen-space derivatives (fallback, robust)
-// If you later provide vertex Tangent/Binormal, switch to a VS that passes them.
-//==================================================
-void BuildTBN(float3 positionWorld,
-        float3 NormWorld,
-        float2 baseUV,
-
-        out float3 tangentVec,
-        out float3 binormalVec,
-        out float3 NormWorldUnit)
-{
-    float3 derivativePositionDX = ddx(positionWorld);
-    float3 derivativePositionDY = ddy(positionWorld);
-    float2 derivativeUVdx = ddx(baseUV);
-    float2 derivativeUVdy = ddy(baseUV);
-
-    float3 tangentRaw = derivativePositionDX * derivativeUVdy.y - derivativePositionDY * derivativeUVdx.y;
-    float3 binormalRaw = derivativePositionDY * derivativeUVdx.x - derivativePositionDX * derivativeUVdy.x;
-
-    NormWorldUnit = normalize(NormWorld);
-
-    float3 tangentOrthogonal = tangentRaw - NormWorldUnit * dot(NormWorldUnit, tangentRaw);
-    tangentVec = normalize(tangentOrthogonal);
-
-    float3 binormalFromCross = normalize(cross(NormWorldUnit, tangentVec));
-    float handednessCheck = dot(cross(NormWorldUnit, tangentVec), normalize(binormalRaw));
-
+    float3 binormalFromCross = normalize(cross(outWorldNorm, outWorldTan));
+    float handednessCheck = dot(cross(outWorldNorm, outWorldTan), outWorldBin);
     if (handednessCheck < 0.0f)
     {
-        binormalVec = -binormalFromCross;
+        outWorldBin = -binormalFromCross;
     }
     else
     {
-        binormalVec = binormalFromCross;
+        outWorldBin = binormalFromCross;
     }
+
+    outUV = inUV;
 }
 
 //==================================================
@@ -285,7 +267,9 @@ float2 ComputeParallaxOcclusionOffset(float2 baseUV,
 //==================================================
 float4 PS_ParallaxOcclusion(float3 inWorldPos : TEXCOORD0,
         float3 inWorldNorm : TEXCOORD1,
-        float2 inUV : TEXCOORD2) : COLOR0
+        float2 inUV : TEXCOORD2,
+        float3 inWorldTan : TEXCOORD3,
+        float3 inWorldBin : TEXCOORD4) : COLOR0
 {
     float2 baseUV = inUV;
 
@@ -298,13 +282,8 @@ float4 PS_ParallaxOcclusion(float3 inWorldPos : TEXCOORD0,
         baseUV.y = 1.0f - baseUV.y;
     }
 
-    // TBN and view direction (UV space)
-    float3 tangentVec;
-    float3 binormalVec;
-    float3 NormWorldUnit;
-    BuildTBN(inWorldPos, inWorldNorm, baseUV, tangentVec, binormalVec, NormWorldUnit);
-
-    float3x3 tangentBasisMatrix = float3x3(tangentVec, binormalVec, NormWorldUnit);
+    // TBN from vertex data (world space)
+    float3x3 tangentBasisMatrix = float3x3(inWorldTan, inWorldBin, inWorldNorm);
 
     float3 viewDirectionWorld = g_eyePos.xyz - inWorldPos;
     float3 viewDirectionUV = normalize(mul(viewDirectionWorld, transpose(tangentBasisMatrix)));
