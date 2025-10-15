@@ -1,52 +1,55 @@
-// simple2.fx — Parallax Occlusion Mapping (POM)
+// simple.fx — Parallax Occlusion Mapping (POM)
+// Requirements per user:
+// - Always-on POM (no LOD/mip gating)
+// - No self-shadow (occlusion) term
+// - No specular term
+// - in/out parameter style, no one-letter variables, no scientific-notation literals
+// - "TS" naming replaced with "UV" where appropriate
+//
 // UTF-8 (no BOM)
 
 //==================================================
-// 行列・定数
+// Matrices & constants
 //==================================================
 float4x4 g_matWorldViewProj;
 float4x4 g_matWorld;
 
-float4 g_eyePos; // ワールド空間のカメラ位置
-float4 g_lightDirWorld; // ワールド空間の「光線の向き」（Lambert では -g_lightDirWorld を使用）
+float4 g_eyePos; // world-space eye position
+float4 g_lightDirWorld; // world-space light ray direction (Lambert uses -g_lightDirWorld)
 
-// --- POM パラメータ ---
-int g_pomMinSamples = 8; // 正面での層数（少なめ）
-int g_pomMaxSamples = 24; // 斜め視での層数（多め）
-int g_pomRefineSteps = 2; // 交差後のリファイン回数（0〜2 推奨）
-float g_pomScale = 0.04f; // 視差スケール（大きすぎると破綻）
+// --- POM parameters ---
+int g_pomMinSamples = 24; // Steps at near-normal view
+int g_pomMaxSamples = 48; // Steps at grazing view
+int g_pomRefineSteps = 2; // Linear refinement iterations (0..2)
+float g_pomScale = 0.04f; // Parallax height scale
 
-// 旧互換（未使用だが残置）
-float g_parallaxScale = 0.04f;
-float g_parallaxBias = -0.5f * 0.04f;
-
-// 照明（拡散のみ）
+// Lighting (diffuse only)
 float3 g_ambientColor = float3(0.25, 0.25, 0.25);
-float3 g_lightColor = float3(1.50, 1.50, 1.50);
-float g_diffuseGain = 2.0f;
+float3 g_lightColor = float3(1.00, 1.00, 1.00);
+float g_diffuseGain = 1.0f;
 
-// 法線テクスチャのエンコード方式（0=RGB、1=DXT5nm[A=nx,G=ny]）
-float g_normalEncoding = 0.0;
+// Normal encoding (0 = RGB, 1 = DXT5nm: A=Nx, G=Ny)
+float g_normalEncoding = 0.0f;
 
-// UV / Normal 反転トグル
-float g_flipU = 0.0; // 1 で U 反転
-float g_flipV = 0.0; // 1 で V 反転
-float g_flipRed = 0.0; // 1 で法線 X 反転
-float g_flipGreen = 0.0; // 1 で法線 Y 反転
+// UV / Normal flips
+float g_flipU = 0.0f; // 1 -> flip U
+float g_flipV = 0.0f; // 1 -> flip V
+float g_flipRed = 0.0f; // 1 -> flip normal.x
+float g_flipGreen = 0.0f; // 1 -> flip normal.y
 
-// 追加：ハイト反転（0=白が山 / 1=反転）
+// Height polarity (0 = white is high / 1 = invert)
 float g_heightInvert = 1.0f;
 
-// 安定化イプシロン（科学表記は使わない）
-static const float g_parallaxEpsilon = 0.001f; // 分母の下限
-static const float g_denominatorEpsilon = 0.00001f; // 0 除算回避
+// Stability epsilons (no scientific notation)
+static const float g_parallaxEpsilon = 0.001f; // min abs(z) when projecting
+static const float g_denominatorEpsilon = 0.00001f; // avoid divide-by-zero in refinement
 
 //==================================================
-// テクスチャ
+// Textures
 //==================================================
 texture g_texColor;
-texture g_texNormal; // 接空間法線（UV空間での法線）
-texture g_texHeight; // 高さ (R)
+texture g_texNormal; // tangent-space normal map
+texture g_texHeight; // height (R)
 
 sampler2D sColor
 {
@@ -79,7 +82,7 @@ sampler2D sHeight
 };
 
 //==================================================
-// ヘルパ
+// Helpers
 //==================================================
 float SampleHeight(float2 sampleUV)
 {
@@ -93,31 +96,31 @@ float SampleHeight(float2 sampleUV)
     return heightValue;
 }
 
-float3 DecodeNormal(float4 texel)
+float3 DecodeNormal(float4 sampledTexel)
 {
     float3 NormUV;
 
     if (g_normalEncoding > 0.5f)
     {
-        float nx = texel.a * 2.0f - 1.0f;
-        float ny = texel.g * 2.0f - 1.0f;
+        float normalX = sampledTexel.a * 2.0f - 1.0f;
+        float normalY = sampledTexel.g * 2.0f - 1.0f;
 
         if (g_flipRed > 0.5f)
         {
-            nx = -nx;
+            normalX = -normalX;
         }
         if (g_flipGreen > 0.5f)
         {
-            ny = -ny;
+            normalY = -normalY;
         }
 
-        float nzSquared = 1.0f - nx * nx - ny * ny;
-        float nz = sqrt(saturate(nzSquared));
-        NormUV = float3(nx, ny, nz);
+        float normalZSquared = 1.0f - normalX * normalX - normalY * normalY;
+        float normalZ = sqrt(saturate(normalZSquared));
+        NormUV = float3(normalX, normalY, normalZ);
     }
     else
     {
-        NormUV = texel.rgb * 2.0f - 1.0f;
+        NormUV = sampledTexel.rgb * 2.0f - 1.0f;
 
         if (g_flipRed > 0.5f)
         {
@@ -133,8 +136,8 @@ float3 DecodeNormal(float4 texel)
 }
 
 //==================================================
-// VS（in/out 形式）
-// 出力: POSITION0, TEXCOORD0=WorldPos, TEXCOORD1=WorldNorm, TEXCOORD2=UV
+// Vertex Shader (in/out parameters)
+//   Output: POSITION0, TEXCOORD0=WorldPos, TEXCOORD1=WorldNorm, TEXCOORD2=UV
 //==================================================
 void VS(float4 inPos : POSITION0,
         float3 inNormal : NORMAL0,
@@ -148,7 +151,7 @@ void VS(float4 inPos : POSITION0,
     outPos = mul(inPos, g_matWorldViewProj);
     outWorldPos = mul(inPos, g_matWorld).xyz;
 
-    // 等方スケール前提（非等方スケールなら逆転置行列を使用）
+    // Assuming uniform scaling; if not, use inverse-transpose
     float3x3 world3x3 = (float3x3) g_matWorld;
     outWorldNorm = normalize(mul(inNormal, world3x3));
 
@@ -156,7 +159,8 @@ void VS(float4 inPos : POSITION0,
 }
 
 //==================================================
-// TBN 構築（右手系を保証）— 三項演算子は使わず if/else
+// TBN from screen-space derivatives (fallback, robust)
+// If you later provide vertex Tangent/Binormal, switch to a VS that passes them.
 //==================================================
 void BuildTBN(float3 positionWorld,
         float3 NormWorld,
@@ -193,10 +197,11 @@ void BuildTBN(float3 positionWorld,
 }
 
 //==================================================
-// POM — UV オフセット計算（固定回数ループ + 早期 break）
+// Parallax Occlusion Mapping — UV offset computation
+// Fixed upper bound loop with early exits; linear refinement
 //==================================================
-static const int POM_MAX_STEPS_CONST = 24; // コンパイル時定数（命令数管理）
-static const int POM_REFINE_STEPS_CONST = 2; // 0〜2
+static const int POM_MAX_STEPS_CONST = 48; // compile-time cap
+static const int POM_REFINE_STEPS_CONST = 2; // 0..2
 
 float2 ComputeParallaxOcclusionOffset(float2 baseUV,
         float3 viewDirectionUV)
@@ -209,7 +214,7 @@ float2 ComputeParallaxOcclusionOffset(float2 baseUV,
         viewDirectionZAbs = g_parallaxEpsilon;
     }
 
-    // 視角依存の目標ステップ数（斜め視ほど増やす）
+    // Angle-dependent step count (more steps for grazing views)
     float desiredStepCountFloat = lerp((float) g_pomMinSamples, (float) g_pomMaxSamples, 1.0f - saturate(viewDirectionZAbs));
     int desiredStepCount = (int) (desiredStepCountFloat + 0.5f);
 
@@ -252,7 +257,7 @@ float2 ComputeParallaxOcclusionOffset(float2 baseUV,
         currentSampledHeight = SampleHeight(currentUV);
     }
 
-    // 交差点近傍の線形リファイン（固定回数）
+    // Linear refinement around the hit
     [unroll(POM_REFINE_STEPS_CONST)]
     for (int refineIndex = 0; refineIndex < POM_REFINE_STEPS_CONST; refineIndex++)
     {
@@ -272,11 +277,11 @@ float2 ComputeParallaxOcclusionOffset(float2 baseUV,
         previousUV = lerp(previousUV, currentUV, 0.5f);
     }
 
-    return currentUV; // Address=WRAP のためそのまま返す
+    return currentUV; // Address WRAP/MIRROR recommended
 }
 
 //==================================================
-// PS（in/out 形式）
+// Pixel Shader (in/out parameters)
 //==================================================
 float4 PS_ParallaxOcclusion(float3 inWorldPos : TEXCOORD0,
         float3 inWorldNorm : TEXCOORD1,
@@ -284,7 +289,6 @@ float4 PS_ParallaxOcclusion(float3 inWorldPos : TEXCOORD0,
 {
     float2 baseUV = inUV;
 
-    // UV 反転
     if (g_flipU > 0.5f)
     {
         baseUV.x = 1.0f - baseUV.x;
@@ -294,7 +298,7 @@ float4 PS_ParallaxOcclusion(float3 inWorldPos : TEXCOORD0,
         baseUV.y = 1.0f - baseUV.y;
     }
 
-    // TBN とビュー方向（UV 空間）
+    // TBN and view direction (UV space)
     float3 tangentVec;
     float3 binormalVec;
     float3 NormWorldUnit;
@@ -305,16 +309,16 @@ float4 PS_ParallaxOcclusion(float3 inWorldPos : TEXCOORD0,
     float3 viewDirectionWorld = g_eyePos.xyz - inWorldPos;
     float3 viewDirectionUV = normalize(mul(viewDirectionWorld, transpose(tangentBasisMatrix)));
 
-    // --- POM でオフセットした UV ---
+    // Compute parallaxed UV with POM
     float2 parallaxedUV = ComputeParallaxOcclusionOffset(baseUV, viewDirectionUV);
 
-    // サンプリング
+    // Sample textures
     float3 albedoColor = tex2D(sColor, parallaxedUV).rgb;
     float4 normalTexel = tex2D(sNormal, parallaxedUV);
     float3 NormUV = DecodeNormal(normalTexel);
     float3 NormWorldFromMap = normalize(mul(NormUV, tangentBasisMatrix));
 
-    // Lambert 拡散（g_lightDirWorld は「光線の向き」なので - を取る）
+    // Diffuse-only lighting (no specular, no shadow/occlusion)
     float3 lightDirectionWorld = normalize(g_lightDirWorld.xyz);
     float NdL = saturate(dot(NormWorldFromMap, -lightDirectionWorld));
     float3 diffuseTerm = g_lightColor * (NdL * g_diffuseGain);
