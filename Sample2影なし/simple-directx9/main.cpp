@@ -429,7 +429,7 @@ static void Render()
     HRESULT hResult = E_FAIL;
 
     static float angleCamera = 0.0f;
-    angleCamera += 0.01f;
+    angleCamera += 0.02f;
 
     static float angleLight = 0.0f;
     angleLight += 0.02f;
@@ -515,100 +515,6 @@ static void Render()
     g_pD3dDevice->EndScene();
     g_pD3dDevice->Present(NULL, NULL, NULL, NULL);
 }
-
-/*
-static void Render()
-{
-    HRESULT hResult = E_FAIL;
-
-    static float angleCamera = 0.0f;
-    angleCamera += 0.01f;
-
-    static float angleLight = 0.0f;
-    angleLight += 0.02f;
-
-    // Matrices
-    D3DXMATRIX worldMatrix;
-    D3DXMATRIX viewMatrix;
-    D3DXMATRIX projMatrix;
-    D3DXMATRIX worldViewProj;
-
-    D3DXMatrixIdentity(&worldMatrix);
-
-    D3DXMatrixPerspectiveFovLH(&projMatrix,
-                               D3DXToRadian(45.0f),
-                               static_cast<float>(WINDOW_SIZE_W) / static_cast<float>(WINDOW_SIZE_H),
-                               1.0f,
-                               10000.0f);
-
-    D3DXVECTOR3 eyePosition(3.0f * sinf(angleCamera), 2.0f, -3.0f * cosf(angleCamera));
-    D3DXVECTOR3 targetPosition(0.0f, 0.0f, 0.0f);
-    D3DXVECTOR3 upDirection(0.0f, 1.0f, 0.0f);
-
-    D3DXMatrixLookAtLH(&viewMatrix, &eyePosition, &targetPosition, &upDirection);
-
-    worldViewProj = worldMatrix * viewMatrix * projMatrix;
-
-    // Clear
-    hResult = g_pD3dDevice->Clear(0,
-                                  NULL,
-                                  D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER,
-                                  D3DCOLOR_XRGB(100, 100, 100),
-                                  1.0f,
-                                  0);
-    assert(SUCCEEDED(hResult));
-
-    hResult = g_pD3dDevice->BeginScene();
-    assert(SUCCEEDED(hResult));
-
-    // Effect constants
-    g_pEffect->SetMatrix("g_matWorldViewProj", &worldViewProj);
-    g_pEffect->SetMatrix("g_matWorld", &worldMatrix);
-
-    D3DXVECTOR4 eyePos4(eyePosition.x, eyePosition.y, eyePosition.z, 1.0f);
-    g_pEffect->SetVector("g_eyePos", &eyePos4);
-
-    // World-space light direction (normalized)
-    D3DXVECTOR4 lightDir(1.0f * sinf(angleLight),
-                         1.0f * sinf(angleLight),
-                         1.0f * cosf(angleLight),
-                         0.0f);
-    D3DXVec4Normalize(&lightDir, &lightDir);
-    g_pEffect->SetVector("g_lightDirWorld", &lightDir);
-
-    // POM parameters (if the technique uses them)
-    g_pEffect->SetInt("g_pomMinSamples", 48);
-    g_pEffect->SetInt("g_pomMaxSamples", 48);
-    g_pEffect->SetInt("g_pomRefineSteps", 2);
-    g_pEffect->SetFloat("g_pomScale", 0.1f);
-
-    g_pEffect->SetTexture("g_texNormal", g_pNormalTex);
-    g_pEffect->SetTexture("g_texHeight", g_pHeightTex);
-
-    // Choose technique with graceful fallback
-    D3DXHANDLE techParallax = g_pEffect->GetTechniqueByName("Technique_ParallaxOcclusion");
-
-    g_pEffect->SetTechnique(techParallax);
-
-    UINT numPasses = 0;
-    g_pEffect->Begin(&numPasses, 0);
-    g_pEffect->BeginPass(0);
-
-    // Draw subsets with their textures
-    for (DWORD i = 0; i < g_numMaterials; ++i)
-    {
-        g_pEffect->SetTexture("g_texColor", g_textures[i]);
-        g_pEffect->CommitChanges();
-        g_pMesh->DrawSubset(i);
-    }
-
-    g_pEffect->EndPass();
-    g_pEffect->End();
-
-    g_pD3dDevice->EndScene();
-    g_pD3dDevice->Present(NULL, NULL, NULL, NULL);
-}
-*/
 
 // -----------------------------------------------------------------------------
 // Window Proc

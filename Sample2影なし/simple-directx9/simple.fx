@@ -1,9 +1,10 @@
 // simple.fx — Parallax Occlusion Mapping (POM)
 // Vertex Tangent/Binormal version
-// - Always-on POM (no LOD/mip gating)
-// - No self-shadow term, no specular term
+// - POM always ON (no mip/LOD gating)
+// - No self-shadow, no specular（diffuse only）
 // - in/out parameter style, no one-letter variables, no scientific-notation literals
-// - "TS" naming replaced with "UV"
+// - “TS” naming is replaced with “UV”
+// - Height aligned to DXSDK: white = 0 (surface), black = 1 (into depth)
 // UTF-8 (no BOM)
 
 //==================================================
@@ -35,11 +36,11 @@ float g_flipV = 0.0f; // 1 -> flip V
 float g_flipRed = 0.0f; // 1 -> flip normal.x
 float g_flipGreen = 0.0f; // 1 -> flip normal.y
 
-// Height polarity (0 = white is high / 1 = invert)
-float g_heightInvert = 0.0f;
+// Height polarity (0 = DXSDK既定: 白=0, 黒=1 / 1 = 反転)
+float g_heightInvert = 1.0f;
 
 // Stability epsilons (no scientific notation)
-static const float g_parallaxEpsilon = 0.001f; // min abs(z) when projecting
+static const float g_parallaxEpsilon = 0.001f; // min |z| when projecting (sign-preserving)
 static const float g_denominatorEpsilon = 0.00001f; // avoid divide-by-zero in refinement
 
 //==================================================
@@ -65,7 +66,7 @@ sampler2D sNormal
     MinFilter = LINEAR;
     MagFilter = LINEAR;
     MipFilter = LINEAR;
-    AddressU = WRAP;
+    AddressU = WRAP; // tiling素材なら WRAP が自然
     AddressV = WRAP;
 };
 
@@ -75,7 +76,7 @@ sampler2D sHeight
     MinFilter = LINEAR;
     MagFilter = LINEAR;
     MipFilter = LINEAR;
-    AddressU = WRAP;
+    AddressU = WRAP; // tiling素材なら WRAP が自然
     AddressV = WRAP;
 };
 
@@ -84,14 +85,16 @@ sampler2D sHeight
 //==================================================
 float SampleHeight(float2 sampleUV)
 {
-    float heightValue = tex2D(sHeight, sampleUV).r;
+    // DXSDKの解釈: 白(1)→0, 黒(0)→1（=奥行き）
+    float heightGray = tex2D(sHeight, sampleUV).r;
+    float height01 = 1.0f - heightGray;
 
     if (g_heightInvert > 0.5f)
     {
-        heightValue = 1.0f - heightValue;
+        height01 = 1.0f - height01;
     }
 
-    return heightValue;
+    return height01;
 }
 
 float3 DecodeNormal(float4 sampledTexel)
@@ -135,7 +138,7 @@ float3 DecodeNormal(float4 sampledTexel)
 
 //==================================================
 // Vertex Shader (in/out parameters)
-//   Input includes TANGENT0 and BINORMAL0 from the mesh
+//   Input: TANGENT0 / BINORMAL0 from mesh
 //   Output: POSITION0, TEXCOORD0=WorldPos, TEXCOORD1=WorldNorm,
 //           TEXCOORD2=UV, TEXCOORD3=WorldTan, TEXCOORD4=WorldBin
 //==================================================
@@ -155,7 +158,8 @@ void VS(float4 inPos : POSITION0,
     outPos = mul(inPos, g_matWorldViewProj);
     outWorldPos = mul(inPos, g_matWorld).xyz;
 
-    float3x3 world3x3 = (float3x3) g_matWorld; // uniform scale assumed
+    // Assuming uniform scaling; if not, use inverse-transpose
+    float3x3 world3x3 = (float3x3) g_matWorld;
 
     outWorldNorm = normalize(mul(inNormal, world3x3));
     outWorldTan = normalize(mul(inTangent, world3x3));
@@ -181,6 +185,7 @@ void VS(float4 inPos : POSITION0,
 //==================================================
 // Parallax Occlusion Mapping — UV offset computation
 // Fixed upper bound loop with early exits; linear refinement
+//  * march direction follows DXSDK: toward interior (negative)
 //==================================================
 static const int POM_MAX_STEPS_CONST = 48; // compile-time cap
 static const int POM_REFINE_STEPS_CONST = 2; // 0..2
@@ -189,15 +194,25 @@ float2 ComputeParallaxOcclusionOffset(float2 baseUV,
         float3 viewDirectionUV)
 {
     float3 viewDirectionUVUnit = normalize(viewDirectionUV);
-    float viewDirectionZAbs = abs(viewDirectionUVUnit.z);
 
-    if (viewDirectionZAbs < g_parallaxEpsilon)
+    // Sign-preserving clamp for denominator (no abs)
+    float viewDirectionZ = viewDirectionUVUnit.z;
+    if (viewDirectionZ >= 0.0f && viewDirectionZ < g_parallaxEpsilon)
     {
-        viewDirectionZAbs = g_parallaxEpsilon;
+        viewDirectionZ = g_parallaxEpsilon;
+    }
+    else if (viewDirectionZ < 0.0f && -viewDirectionZ < g_parallaxEpsilon)
+    {
+        viewDirectionZ = -g_parallaxEpsilon;
     }
 
-    // Angle-dependent step count (more steps for grazing views)
-    float desiredStepCountFloat = lerp((float) g_pomMinSamples, (float) g_pomMaxSamples, 1.0f - saturate(viewDirectionZAbs));
+    // Angle-dependent step count uses |z| only for step allocation
+    float viewDirectionZAbs = abs(viewDirectionUVUnit.z);
+    
+    float effectiveScale = g_pomScale * viewDirectionZAbs; // ★追加：減衰
+    float desiredStepCountFloat = lerp((float) g_pomMinSamples,
+                                       (float) g_pomMaxSamples,
+                                       1.0f - saturate(viewDirectionZAbs));
     int desiredStepCount = (int) (desiredStepCountFloat + 0.5f);
 
     if (desiredStepCount < 1)
@@ -209,7 +224,8 @@ float2 ComputeParallaxOcclusionOffset(float2 baseUV,
         desiredStepCount = POM_MAX_STEPS_CONST;
     }
 
-    float2 parallaxDirection = (viewDirectionUVUnit.xy / viewDirectionZAbs) * g_pomScale;
+    // March toward interior (negative sign)
+    float2 parallaxDirection = -(viewDirectionUVUnit.xy / viewDirectionZ) * g_pomScale;
     float2 uvStepPerLayer = parallaxDirection / (float) desiredStepCount;
 
     float currentLayerHeight = 1.0f;
@@ -228,6 +244,7 @@ float2 ComputeParallaxOcclusionOffset(float2 baseUV,
             break;
         }
 
+        // Hit condition: sampled height reached the layer height
         if (currentSampledHeight >= currentLayerHeight)
         {
             break;
@@ -259,7 +276,7 @@ float2 ComputeParallaxOcclusionOffset(float2 baseUV,
         previousUV = lerp(previousUV, currentUV, 0.5f);
     }
 
-    return currentUV; // Address WRAP/MIRROR recommended
+    return currentUV;
 }
 
 //==================================================
@@ -286,10 +303,10 @@ float4 PS_ParallaxOcclusion(float3 inWorldPos : TEXCOORD0,
     float3x3 tangentBasisMatrix = float3x3(inWorldTan, inWorldBin, inWorldNorm);
 
     float3 viewDirectionWorld = g_eyePos.xyz - inWorldPos;
-    float3 viewDirectionUV = normalize(mul(viewDirectionWorld, transpose(tangentBasisMatrix)));
+    float3 viewDirectionUVDir = normalize(mul(viewDirectionWorld, transpose(tangentBasisMatrix)));
 
     // Compute parallaxed UV with POM
-    float2 parallaxedUV = ComputeParallaxOcclusionOffset(baseUV, viewDirectionUV);
+    float2 parallaxedUV = ComputeParallaxOcclusionOffset(baseUV, viewDirectionUVDir);
 
     // Sample textures
     float3 albedoColor = tex2D(sColor, parallaxedUV).rgb;
@@ -297,7 +314,7 @@ float4 PS_ParallaxOcclusion(float3 inWorldPos : TEXCOORD0,
     float3 NormUV = DecodeNormal(normalTexel);
     float3 NormWorldFromMap = normalize(mul(NormUV, tangentBasisMatrix));
 
-    // Diffuse-only lighting (no specular, no shadow/occlusion)
+    // Diffuse-only lighting (no specular, no self-shadow)
     float3 lightDirectionWorld = normalize(g_lightDirWorld.xyz);
     float NdL = saturate(dot(NormWorldFromMap, -lightDirectionWorld));
     float3 diffuseTerm = g_lightColor * (NdL * g_diffuseGain);
