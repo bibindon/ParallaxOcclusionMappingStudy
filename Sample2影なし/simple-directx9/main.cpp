@@ -236,93 +236,67 @@ static void Cleanup()
     SAFE_RELEASE(g_pD3D);
 }
 
-// メッシュに TANGENT0 / BINORMAL0 を追加し、T/B/N を計算して g_pMesh に反映する
 static void AddTangentBinormalToMesh()
 {
     assert(g_pMesh != NULL);
 
-    // 既存の宣言を取得
-    D3DVERTEXELEMENT9 originalDecl[MAX_FVF_DECL_SIZE] = {};
-    HRESULT hr = g_pMesh->GetDeclaration(originalDecl);
+    // 1) SDKと同じ固定レイアウトでクローン（pos3, uv2, nrm3, tan3, bin3）
+    const D3DVERTEXELEMENT9 declFixed[] =
+    {
+        { 0,  0, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_POSITION, 0 },
+        { 0, 12, D3DDECLTYPE_FLOAT2, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, 0 },
+        { 0, 20, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_NORMAL,   0 },
+        { 0, 32, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TANGENT,  0 },
+        { 0, 44, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_BINORMAL, 0 },
+        D3DDECL_END()
+    };
+
+    ID3DXMesh* pCloned = NULL;
+    HRESULT hr = g_pMesh->CloneMesh(g_pMesh->GetOptions(), declFixed, g_pD3dDevice, &pCloned);
     assert(SUCCEEDED(hr));
+    SAFE_RELEASE(g_pMesh);
+    g_pMesh = pCloned;
 
-    // 既に TANGENT / BINORMAL があるかチェック
-    bool hasTangent = false;
-    bool hasBinormal = false;
-    for (int i = 0; i < MAX_FVF_DECL_SIZE && originalDecl[i].Stream != 0xFF; ++i)
+    // 2) 必要なら法線を先に作る
+    D3DVERTEXELEMENT9 oldDecl[MAX_FVF_DECL_SIZE] = {};
+    BOOL hasNormal = FALSE;
+    if (SUCCEEDED(g_pMesh->GetDeclaration(oldDecl)))
     {
-        if (originalDecl[i].Usage == D3DDECLUSAGE_TANGENT)  hasTangent = true;
-        if (originalDecl[i].Usage == D3DDECLUSAGE_BINORMAL) hasBinormal = true;
-    }
-
-    // 必要なら宣言末尾に TANGENT / BINORMAL を追加してクローン
-    LPD3DXMESH meshWithTB = g_pMesh;
-    meshWithTB->AddRef();
-
-    if (!hasTangent || !hasBinormal)
-    {
-        // 末尾に TANGENT(float3) / BINORMAL(float3) を追加
-        D3DVERTEXELEMENT9 newDecl[MAX_FVF_DECL_SIZE] = {};
-
-        WORD stride = D3DXGetDeclVertexSize(originalDecl, 0);
-        int out = 0;
-        for (int i = 0; i < MAX_FVF_DECL_SIZE; ++i)
+        for (UINT i = 0; oldDecl[i].Stream != 0xFF; ++i)
         {
-            newDecl[out] = originalDecl[i];
-            if (originalDecl[i].Stream == 0xFF)
+            if (oldDecl[i].Usage == D3DDECLUSAGE_NORMAL)
             {
+                hasNormal = TRUE;
                 break;
             }
-            ++out;
         }
-
-        if (!hasTangent)
-        {
-            newDecl[out++] = D3DVERTEXELEMENT9 {
-                0, stride, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TANGENT, 0
-            };
-            stride += sizeof(float) * 3;
-        }
-        if (!hasBinormal)
-        {
-            newDecl[out++] = D3DVERTEXELEMENT9 {
-                0, stride, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_BINORMAL, 0
-            };
-            stride += sizeof(float) * 3;
-        }
-        newDecl[out] = D3DDECL_END();
-
-        LPD3DXMESH cloned = NULL;
-        hr = g_pMesh->CloneMesh(D3DXMESH_MANAGED, newDecl, g_pD3dDevice, &cloned);
-        assert(SUCCEEDED(hr));
-
-        SAFE_RELEASE(meshWithTB);
-        meshWithTB = cloned;
     }
 
-    // 隣接情報を作成（しきい値は小さめで OK）
-    std::vector<DWORD> adjacency(meshWithTB->GetNumFaces() * 3);
-    hr = meshWithTB->GenerateAdjacency(0.000001f, adjacency.data()); // DXSDK でも微小値で生成しています
+    if (!hasNormal)
+    {
+        D3DXComputeNormals(g_pMesh, NULL);
+    }
+
+    // 3) 隣接情報
+    std::vector<DWORD> adjacency(g_pMesh->GetNumFaces() * 3);
+    hr = g_pMesh->GenerateAdjacency(1e-6f, adjacency.data());
     assert(SUCCEEDED(hr));
 
-        // Tangent / Binormal / Normal を計算・書き込み
-    ID3DXMesh* outMesh = NULL;
-    hr = D3DXComputeTangentFrameEx(
-        meshWithTB,
-        D3DDECLUSAGE_TEXCOORD, 0,          // 基準となる UV
-        D3DDECLUSAGE_TANGENT, 0,          // 書き込み先: Tangent
-        D3DDECLUSAGE_BINORMAL, 0,          // 書き込み先: Binormal
-        D3DDECLUSAGE_NORMAL, 0,          // 書き込み先: Normal（不足時は計算）
-        0,
-        adjacency.data(),
-        -1.01f, -0.01f, -1.01f,            // しきい値（DXSDK サンプル相当）
-        &outMesh, NULL
-    );
+    // 4) Tangent / Binormal / Normal を計算（SDKのしきい値）
+    ID3DXMesh* pOut = NULL;
+    hr = D3DXComputeTangentFrameEx(g_pMesh,
+                                   D3DDECLUSAGE_TEXCOORD, 0,   // 基準UV
+                                   D3DDECLUSAGE_TANGENT,  0,   // 書き込み: Tangent
+                                   D3DDECLUSAGE_BINORMAL, 0,   // 書き込み: Binormal
+                                   D3DDECLUSAGE_NORMAL,   0,   // 書き込み: Normal（再計算も可）
+                                   0,
+                                   adjacency.data(),
+                                   -1.01f, -0.01f, -1.01f,     // しきい値（SDK相当）
+                                   &pOut, NULL);
     assert(SUCCEEDED(hr));
 
-    SAFE_RELEASE(meshWithTB);
     SAFE_RELEASE(g_pMesh);
-    g_pMesh = outMesh;
+    g_pMesh = pOut;
 }
 
 static void InitD3D(HWND hWnd)
@@ -477,7 +451,7 @@ static void Render()
 
     // POM パラメータ（simple.fx の名前に合わせる）
     g_pEffect->SetFloat("g_fBaseTextureRepeat", 1.0f); // 必要なら tiling を変更
-    g_pEffect->SetFloat("g_fHeightMapScale",    0.06f); // 高さスケール（素材に合わせて調整）
+    g_pEffect->SetFloat("g_fHeightMapScale",    0.1f); // 高さスケール（素材に合わせて調整）
     g_pEffect->SetInt  ("g_nMinSamples",        50);
     g_pEffect->SetInt  ("g_nMaxSamples",        50);
 

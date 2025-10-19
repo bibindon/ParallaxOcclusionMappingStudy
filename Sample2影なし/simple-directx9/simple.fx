@@ -172,8 +172,7 @@ float4 PS(PS_INPUT i) : COLOR0
         vTexCurrentOffset -= vTexOffsetPerStep;
 
         // tex2Dgrad関数を使うとPIX For Windowsが落ちる
-        // fCurrHeight = tex2Dgrad( tNormalHeightMap, vTexCurrentOffset, dx, dy ).a;
-        //fCurrHeight = tex2Dlod(tNormalHeightMap, float4(vTexCurrentOffset, 0.0f, 0.0f)).a;
+        // fCurrHeight = tex2Dgrad( heightMapSampler, vTexCurrentOffset, dx, dy ).r;
         fCurrHeight = tex2Dlod(heightMapSampler, float4(vTexCurrentOffset, 0.0f, 0.0f)).r;
 
         fCurrentLayer -= fStepSize;
