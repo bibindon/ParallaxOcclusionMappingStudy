@@ -263,18 +263,15 @@ static void AddTangentBinormalToMesh()
     {
         // 末尾に TANGENT(float3) / BINORMAL(float3) を追加
         D3DVERTEXELEMENT9 newDecl[MAX_FVF_DECL_SIZE] = {};
-        int out = 0;
-        WORD stride = 0;
 
+        WORD stride = D3DXGetDeclVertexSize(originalDecl, 0);
+        int out = 0;
         for (int i = 0; i < MAX_FVF_DECL_SIZE; ++i)
         {
             newDecl[out] = originalDecl[i];
-            if (originalDecl[i].Stream == 0xFF) { // D3DDECL_END
-                break;
-            }
-            if (originalDecl[i].Stream == 0 && originalDecl[i].Type != D3DDECLTYPE_UNUSED)
+            if (originalDecl[i].Stream == 0xFF)
             {
-                stride = originalDecl[i].Offset + (WORD)D3DXGetDeclVertexSize(originalDecl, 0);
+                break;
             }
             ++out;
         }
@@ -437,10 +434,11 @@ static void Render()
     D3DXMatrixPerspectiveFovLH(&mProj,
         D3DXToRadian(45.0f),
         float(WINDOW_SIZE_W) / float(WINDOW_SIZE_H),
-        1.0f, 10000.0f);
+        1.0f, 100.0f);
 
     D3DXVECTOR3 eye(3.0f * sinf(angleCamera), 2.0f, -3.0f * cosf(angleCamera));
-    D3DXVECTOR3 at(0,0,0), up(0,1,0);
+    D3DXVECTOR3 at(0, 0, 0);
+    D3DXVECTOR3 up(0, 1, 0);
     D3DXMatrixLookAtLH(&mView, &eye, &at, &up);
 
     mWVP = mWorld * mView * mProj;
@@ -456,7 +454,7 @@ static void Render()
     // ===== simple.fx のパラメータ名でセット =====
     // 行列
     g_pEffect->SetMatrix("g_mWorldViewProj", &mWVP);
-    g_pEffect->SetMatrix("g_mWorld",        &mWorld);
+    g_pEffect->SetMatrix("g_mWorld",         &mWorld);
 
     // 視点（float4）
     D3DXVECTOR4 vEye(eye.x, eye.y, eye.z, 1.0f);
@@ -480,8 +478,8 @@ static void Render()
     // POM パラメータ（simple.fx の名前に合わせる）
     g_pEffect->SetFloat("g_fBaseTextureRepeat", 1.0f); // 必要なら tiling を変更
     g_pEffect->SetFloat("g_fHeightMapScale",    0.06f); // 高さスケール（素材に合わせて調整）
-    g_pEffect->SetInt  ("g_nMinSamples",        24);
-    g_pEffect->SetInt  ("g_nMaxSamples",        48);
+    g_pEffect->SetInt  ("g_nMinSamples",        50);
+    g_pEffect->SetInt  ("g_nMaxSamples",        50);
 
     // テクスチャ（simple.fx のスロット名に合わせる）
     g_pEffect->SetTexture("g_normalTexture", g_pNormalTex);

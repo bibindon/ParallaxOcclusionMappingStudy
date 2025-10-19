@@ -21,12 +21,11 @@ float4 g_LightAmbient; // 光の環境色
 
 float4 g_vEye; // カメラ位置
 float g_fBaseTextureRepeat; // ベース／法線テクスチャのタイリング係数
-float g_fHeightMapScale = 0.1f; // 高さマップの有効な値域（スケール）を表す
+float g_fHeightMapScale; // 高さマップの有効な値域（スケール）を表す
 
 // 行列:
 float4x4 g_mWorld; // オブジェクトのワールド行列
 float4x4 g_mWorldViewProj; // World * View * Projection 行列
-float4x4 g_mView; // ビュー行列
 
 int g_nMinSamples = 50; // 高さプロファイルをサンプリングする最小サンプル数
 int g_nMaxSamples = 50; // 高さプロファイルをサンプリングする最大サンプル数
@@ -100,7 +99,7 @@ VS_OUTPUT VS(float4 inPositionOS  : POSITION,
 
     float4 vPositionWS = mul(inPositionOS, g_mWorld);
 
-    float3 vViewWS = g_vEye - vPositionWS;
+    float3 vViewWS = g_vEye.xyz - vPositionWS.xyz;
     Out.vViewWS = vViewWS;
 
     // 光源ベクトル（正規化しない）
@@ -215,7 +214,7 @@ float4 PS(PS_INPUT i) : COLOR0
 float4 ComputeIllumination(float2 texCoord, float3 vLightTS, float3 vViewTS)
 {
     // 法線マップから法線（接空間）をサンプルして正規化
-    float3 vNormalTS = normalize(tex2D(normalMapSampler, texCoord) * 2 - 1);
+    float3 vNormalTS = normalize(tex2D(normalMapSampler, texCoord) * 2 - 1).xyz;
 
     // ベースカラーをサンプル
     float4 cBaseColor = tex2D(tBase, texCoord);

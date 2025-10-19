@@ -167,6 +167,8 @@
       <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">"C:\Program Files (x86)\Microsoft DirectX SDK (June 2010)\Utilities\bin\x64\fxc.exe" /T fx_2_0 %(FullPath) /Fo simple.sco</Command>
       <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">simple.sco</Outputs>
       <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">simple.sco</Outputs>
+      <DisableOptimizations Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</DisableOptimizations>
+      <EnableDebuggingInformation Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</EnableDebuggingInformation>
     </FxCompile>
   </ItemGroup>
   <ItemGroup>
