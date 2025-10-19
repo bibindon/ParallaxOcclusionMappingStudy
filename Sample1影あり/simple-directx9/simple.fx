@@ -211,33 +211,32 @@ float4 PS(PS_INPUT i) : COLOR0
 // 説明:    指定ピクセルの属性テクスチャと光ベクトルを用いて
 //          Phong 風の照明を計算する
 //--------------------------------------------------------------------------------------
-float4 ComputeIllumination(float2 texCoord, float3 vLightTS, float3 vViewTS)
+float4 ComputeIllumination(float2 texCoord, float3 inLightTS, float3 inViewTS)
 {
-    // 法線マップから法線（接空間）をサンプルして正規化
-    float3 vNormalTS = normalize(tex2D(normalMapSampler, texCoord) * 2 - 1).xyz;
+    float3 vNormalTS = tex2D(normalMapSampler, texCoord).xyz * 2.0f - 1.0f;
+    vNormalTS.y = -vNormalTS.y;
+    vNormalTS = normalize(vNormalTS);
 
-    // ベースカラーをサンプル
-    float4 cBaseColor = tex2D(tBase, texCoord);
+    // 2) L, V は接空間で正規化（向きの約束は下のメモ参照）
+    inLightTS = normalize(inLightTS);   // point -> light
+    inViewTS = normalize(inViewTS);    // point -> eye
 
-    // 拡散反射成分を計算
-    float3 vLightTSAdj = float3(vLightTS.x, -vLightTS.y, vLightTS.z);
+    // 3) 拡散
+    float  NdotL = saturate(dot(vNormalTS, inLightTS));
+    float4 baseColor = tex2D(tBase, texCoord);
+    float4 diff = NdotL * g_materialDiffuseColor;
 
-    float4 cDiffuse = saturate(dot(vNormalTS, vLightTSAdj)) * g_materialDiffuseColor;
-
-    // 必要であれば鏡面成分を計算
-    float4 cSpecular = 0;
+    // 4) 鏡面
+    float4 specCol = 0;
     if (g_bAddSpecular)
     {
-        float3 vReflectionTS = normalize(2 * dot(vViewTS, vNormalTS) * vNormalTS - vViewTS);
-
-        float fRdotL = saturate(dot(vReflectionTS, vLightTSAdj));
-        cSpecular = saturate(pow(fRdotL, g_fSpecularExponent)) * g_materialSpecularColor;
+        float3 HalfVector  = normalize(inLightTS + inViewTS);
+        float  NdotH = saturate(dot(vNormalTS, HalfVector));
+        float  specular  = pow(NdotH, g_fSpecularExponent);
+        specCol    = specular * g_materialSpecularColor;
     }
 
-    // 最終色を合成
-    float4 cFinalColor = (g_materialAmbientColor + cDiffuse) * cBaseColor + cSpecular;
-
-    return cFinalColor;
+    return (g_materialAmbientColor + diff) * baseColor + specCol;
 }
 
 technique Technique0
