@@ -28,7 +28,7 @@ float4x4 g_mWorld; // オブジェクトのワールド行列
 float4x4 g_mWorldViewProj; // World * View * Projection 行列
 
 int g_nMinSamples = 50; // 高さプロファイルをサンプリングする最小サンプル数
-int g_nMaxSamples = 50; // 高さプロファイルをサンプリングする最大サンプル数
+int g_nMaxSamples = 100; // 高さプロファイルをサンプリングする最大サンプル数
 
 //--------------------------------------------------------------------------------------
 // テクスチャサンプラ
@@ -191,9 +191,10 @@ float4 PS(PS_INPUT i) : COLOR0
     float2 texSampleBase = i.texCoord - vParallaxOffset;
     texSample = texSampleBase;
 
-    // ライトをちゃんとやるか否か
+    // 陰を表示するか
     if (true)
     {
+        // TODO 正しくない気がする
         cResultColor = ComputeIllumination(texSample, vLightTS, vViewTS);
     }
     else
