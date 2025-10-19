@@ -149,9 +149,6 @@ float4 PS(PS_INPUT i) : COLOR0
     float3 vLightTS = normalize(i.vLightTS);
     float3 vNormalWS = normalize(i.vNormalWS);
 
-    // まずは入力のテクスチャ座標でサンプル（=バンプマップ相当）
-    float2 texSample = i.texCoord;
-
     // 視角に応じてサンプル数を変更。
     // グレージング角であるほどステップを細かくして精度を上げる。
     int nNumSteps = (int) lerp(g_nMaxSamples, g_nMinSamples, dot(vViewWS, vNormalWS));
@@ -188,13 +185,11 @@ float4 PS(PS_INPUT i) : COLOR0
     float2 vParallaxOffset = i.vParallaxOffsetTS * (1 - fCurrentLayer);
 
     // 疑似的に押し出された表面上の最終テクスチャ座標
-    float2 texSampleBase = i.texCoord - vParallaxOffset;
-    texSample = texSampleBase;
+    float2 texSample = i.texCoord - vParallaxOffset;
 
     // 陰を表示するか
     if (true)
     {
-        // TODO 正しくない気がする
         cResultColor = ComputeIllumination(texSample, vLightTS, vViewTS);
     }
     else
