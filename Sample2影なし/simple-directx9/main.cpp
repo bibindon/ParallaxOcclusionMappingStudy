@@ -121,103 +121,6 @@ int WINAPI _tWinMain(_In_ HINSTANCE hInstance,
     return 0;
 }
 
-/*
-// -----------------------------------------------------------------------------
-// D3D Init
-// -----------------------------------------------------------------------------
-static void InitD3D(HWND hWnd)
-{
-    HRESULT hResult = E_FAIL;
-
-    g_pD3D = Direct3DCreate9(D3D_SDK_VERSION);
-    assert(g_pD3D != NULL);
-
-    D3DPRESENT_PARAMETERS presentParams = { 0 };
-    presentParams.Windowed = TRUE;
-    presentParams.SwapEffect = D3DSWAPEFFECT_DISCARD;
-    presentParams.BackBufferFormat = D3DFMT_UNKNOWN;
-    presentParams.BackBufferCount = 1;
-    presentParams.MultiSampleType = D3DMULTISAMPLE_NONE;
-    presentParams.MultiSampleQuality = 0;
-    presentParams.EnableAutoDepthStencil = TRUE;
-    presentParams.AutoDepthStencilFormat = D3DFMT_D16;
-    presentParams.hDeviceWindow = hWnd;
-    presentParams.PresentationInterval = D3DPRESENT_INTERVAL_DEFAULT;
-
-    hResult = g_pD3D->CreateDevice(D3DADAPTER_DEFAULT,
-                                   D3DDEVTYPE_HAL,
-                                   hWnd,
-                                   D3DCREATE_HARDWARE_VERTEXPROCESSING,
-                                   &presentParams,
-                                   &g_pD3dDevice);
-    if (FAILED(hResult))
-    {
-        hResult = g_pD3D->CreateDevice(D3DADAPTER_DEFAULT,
-                                       D3DDEVTYPE_HAL,
-                                       hWnd,
-                                       D3DCREATE_SOFTWARE_VERTEXPROCESSING,
-                                       &presentParams,
-                                       &g_pD3dDevice);
-        assert(SUCCEEDED(hResult));
-    }
-
-    // Load mesh (materials & textures)
-    LPD3DXBUFFER materialBuffer = NULL;
-    hResult = D3DXLoadMeshFromX(_T("untitled.blend.x"),
-                                D3DXMESH_SYSTEMMEM,
-                                g_pD3dDevice,
-                                NULL,
-                                &materialBuffer,
-                                NULL,
-                                &g_numMaterials,
-                                &g_pMesh);
-    assert(SUCCEEDED(hResult));
-
-    D3DXMATERIAL* materials = reinterpret_cast<D3DXMATERIAL*>(materialBuffer->GetBufferPointer());
-    g_materials.resize(g_numMaterials);
-    g_textures.resize(g_numMaterials);
-
-    for (DWORD i = 0; i < g_numMaterials; ++i)
-    {
-        g_materials[i] = materials[i].MatD3D;
-        g_materials[i].Ambient = g_materials[i].Diffuse;
-        g_textures[i] = NULL;
-
-        std::string texturePath;
-
-        if (materials[i].pTextureFilename != nullptr)
-        {
-            texturePath = materials[i].pTextureFilename;
-        }
-
-        if (!texturePath.empty())
-        {
-            hResult = D3DXCreateTextureFromFileA(g_pD3dDevice, texturePath.c_str(), &g_textures[i]);
-            assert(SUCCEEDED(hResult));
-        }
-    }
-    materialBuffer->Release();
-
-    // Parallax resources (normal / height)
-    hResult = D3DXCreateTextureFromFileW(g_pD3dDevice, L"rocksNormal.png", &g_pNormalTex);
-    assert(SUCCEEDED(hResult));
-
-    hResult = D3DXCreateTextureFromFileW(g_pD3dDevice, L"rocksBump.png", &g_pHeightTex);
-    assert(SUCCEEDED(hResult));
-
-    // Effect
-    hResult = D3DXCreateEffectFromFile(g_pD3dDevice,
-                                       _T("simple.fx"),
-                                       NULL,
-                                       NULL,
-                                       D3DXSHADER_DEBUG,
-                                       NULL,
-                                       &g_pEffect,
-                                       NULL);
-    assert(SUCCEEDED(hResult));
-}
-*/
-
 // -----------------------------------------------------------------------------
 // Cleanup
 // -----------------------------------------------------------------------------
@@ -274,7 +177,7 @@ static void AddTangentBinormalToMesh()
 
     if (!hasNormal)
     {
-        D3DXComputeNormals(g_pMesh, NULL);
+         D3DXComputeNormals(g_pMesh, NULL);
     }
 
     // 3) 隣接情報
@@ -285,13 +188,15 @@ static void AddTangentBinormalToMesh()
     // 4) Tangent / Binormal / Normal を計算（SDKのしきい値）
     ID3DXMesh* pOut = NULL;
     hr = D3DXComputeTangentFrameEx(g_pMesh,
-                                   D3DDECLUSAGE_TEXCOORD, 0,   // 基準UV
-                                   D3DDECLUSAGE_TANGENT,  0,   // 書き込み: Tangent
-                                   D3DDECLUSAGE_BINORMAL, 0,   // 書き込み: Binormal
-                                   D3DDECLUSAGE_NORMAL,   0,   // 書き込み: Normal（再計算も可）
+                                   D3DDECLUSAGE_TEXCOORD, 0,
+                                   D3DDECLUSAGE_TANGENT,  0,
+                                   D3DDECLUSAGE_BINORMAL, 0,
+                                   D3DDECLUSAGE_NORMAL,   0,
                                    0,
                                    adjacency.data(),
-                                   -1.01f, -0.01f, -1.01f,     // しきい値（SDK相当）
+                                   0.01f,
+                                   0.01f,
+                                   0.999f,     // 角の平滑化を防止。平面に対してだけ平滑化を行うようにする
                                    &pOut, NULL);
     assert(SUCCEEDED(hr));
 
@@ -337,7 +242,7 @@ static void InitD3D(HWND hWnd)
 
     // メッシュ読込（マテリアル/テクスチャ）
     LPD3DXBUFFER materialBuffer = NULL;
-    hResult = D3DXLoadMeshFromX(_T("untitled.blend.x"),
+    hResult = D3DXLoadMeshFromX(_T("cube.x"),
                                 D3DXMESH_SYSTEMMEM,
                                 g_pD3dDevice,
                                 NULL,
