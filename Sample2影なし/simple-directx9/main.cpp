@@ -399,7 +399,7 @@ static void InitD3D(HWND hWnd)
     }
     materialBuffer->Release();
 
-        // ★ここで Tangent/Binormal を追加・生成（新規）
+    // ★ここで Tangent/Binormal を追加・生成（新規）
     AddTangentBinormalToMesh();
 
     // POM 用テクスチャ（法線 / 高さ）
@@ -420,91 +420,85 @@ static void InitD3D(HWND hWnd)
     assert(SUCCEEDED(hResult));
 }
 
-
 // -----------------------------------------------------------------------------
-// Render
+// Render  — simple.fx の定数名／テクスチャ名に完全対応
 // -----------------------------------------------------------------------------
 static void Render()
 {
-    HRESULT hResult = E_FAIL;
+    HRESULT hr = E_FAIL;
 
-    static float angleCamera = 0.0f;
-    angleCamera += 0.02f;
+    static float angleCamera = 0.0f;  angleCamera += 0.02f;
+    static float angleLight  = 0.0f;  angleLight  += 0.02f;
 
-    static float angleLight = 0.0f;
-    angleLight += 0.02f;
+    // 行列
+    D3DXMATRIX mWorld, mView, mProj, mWVP;
+    D3DXMatrixIdentity(&mWorld);
 
-    // Matrices
-    D3DXMATRIX worldMatrix;
-    D3DXMATRIX viewMatrix;
-    D3DXMATRIX projMatrix;
-    D3DXMATRIX worldViewProj;
+    D3DXMatrixPerspectiveFovLH(&mProj,
+        D3DXToRadian(45.0f),
+        float(WINDOW_SIZE_W) / float(WINDOW_SIZE_H),
+        1.0f, 10000.0f);
 
-    D3DXMatrixIdentity(&worldMatrix);
+    D3DXVECTOR3 eye(3.0f * sinf(angleCamera), 2.0f, -3.0f * cosf(angleCamera));
+    D3DXVECTOR3 at(0,0,0), up(0,1,0);
+    D3DXMatrixLookAtLH(&mView, &eye, &at, &up);
 
-    D3DXMatrixPerspectiveFovLH(&projMatrix,
-                               D3DXToRadian(45.0f),
-                               static_cast<float>(WINDOW_SIZE_W) / static_cast<float>(WINDOW_SIZE_H),
-                               1.0f,
-                               10000.0f);
+    mWVP = mWorld * mView * mProj;
 
-    D3DXVECTOR3 eyePosition(3.0f * sinf(angleCamera), 2.0f, -3.0f * cosf(angleCamera));
-    D3DXVECTOR3 targetPosition(0.0f, 0.0f, 0.0f);
-    D3DXVECTOR3 upDirection(0.0f, 1.0f, 0.0f);
+    // クリア
+    hr = g_pD3dDevice->Clear(0, NULL,
+                              D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER,
+                              D3DCOLOR_XRGB(100, 100, 100), 1.0f, 0);
+    assert(SUCCEEDED(hr));
+    hr = g_pD3dDevice->BeginScene();
+    assert(SUCCEEDED(hr));
 
-    D3DXMatrixLookAtLH(&viewMatrix, &eyePosition, &targetPosition, &upDirection);
+    // ===== simple.fx のパラメータ名でセット =====
+    // 行列
+    g_pEffect->SetMatrix("g_mWorldViewProj", &mWVP);
+    g_pEffect->SetMatrix("g_mWorld",        &mWorld);
 
-    worldViewProj = worldMatrix * viewMatrix * projMatrix;
+    // 視点（float4）
+    D3DXVECTOR4 vEye(eye.x, eye.y, eye.z, 1.0f);
+    g_pEffect->SetVector("g_vEye", &vEye);
 
-    // Clear
-    hResult = g_pD3dDevice->Clear(0,
-                                  NULL,
-                                  D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER,
-                                  D3DCOLOR_XRGB(100, 100, 100),
-                                  1.0f,
-                                  0);
-    assert(SUCCEEDED(hResult));
+    // 光方向（float3, 正規化）
+    D3DXVECTOR3 lightDir(sinf(angleLight), 0.5f * sinf(angleLight), cosf(angleLight));
+    D3DXVec3Normalize(&lightDir, &lightDir);
+    g_pEffect->SetValue("g_LightDir", &lightDir, sizeof(D3DXVECTOR3));
 
-    hResult = g_pD3dDevice->BeginScene();
-    assert(SUCCEEDED(hResult));
+    // マテリアル
+    D3DXCOLOR colAmb(0.35f, 0.35f, 0.35f, 1.0f);
+    D3DXCOLOR colDif(1, 1, 1, 1);
+    D3DXCOLOR colSpc(1, 1, 1, 1);
+    g_pEffect->SetValue("g_materialAmbientColor",  &colAmb, sizeof(D3DXCOLOR));
+    g_pEffect->SetValue("g_materialDiffuseColor",  &colDif, sizeof(D3DXCOLOR));
+    g_pEffect->SetValue("g_materialSpecularColor", &colSpc, sizeof(D3DXCOLOR));
+    g_pEffect->SetFloat("g_fSpecularExponent", 60.0f);
+    g_pEffect->SetBool ("g_bAddSpecular", TRUE);
 
-    // Effect constants
-    g_pEffect->SetMatrix("g_matWorldViewProj", &worldViewProj);
-    g_pEffect->SetMatrix("g_matWorld", &worldMatrix);
+    // POM パラメータ（simple.fx の名前に合わせる）
+    g_pEffect->SetFloat("g_fBaseTextureRepeat", 1.0f); // 必要なら tiling を変更
+    g_pEffect->SetFloat("g_fHeightMapScale",    0.06f); // 高さスケール（素材に合わせて調整）
+    g_pEffect->SetInt  ("g_nMinSamples",        24);
+    g_pEffect->SetInt  ("g_nMaxSamples",        48);
 
-    D3DXVECTOR4 eyePos4(eyePosition.x, eyePosition.y, eyePosition.z, 1.0f);
-    g_pEffect->SetVector("g_eyePos", &eyePos4);
+    // テクスチャ（simple.fx のスロット名に合わせる）
+    g_pEffect->SetTexture("g_normalTexture", g_pNormalTex);
+    g_pEffect->SetTexture("g_heightTexture", g_pHeightTex);
 
-    // World-space light direction (normalized)
-    D3DXVECTOR4 lightDir(1.0f * sinf(angleLight),
-                         1.0f * sinf(angleLight),
-                         1.0f * cosf(angleLight),
-                         0.0f);
-    D3DXVec4Normalize(&lightDir, &lightDir);
-    g_pEffect->SetVector("g_lightDirWorld", &lightDir);
+    // テクニック
+    D3DXHANDLE hTech = g_pEffect->GetTechniqueByName("Technique0");
+    g_pEffect->SetTechnique(hTech);
 
-    // POM parameters（サンプル寄りの控えめ設定）
-    g_pEffect->SetInt("g_pomMinSamples", 24);
-    g_pEffect->SetInt("g_pomMaxSamples", 48);
-    g_pEffect->SetInt("g_pomRefineSteps", 2);
-    g_pEffect->SetFloat("g_pomScale", 0.1f);  // 0.1f から弱めに
-
-    // テクスチャ
-    g_pEffect->SetTexture("g_texNormal", g_pNormalTex);
-    g_pEffect->SetTexture("g_texHeight", g_pHeightTex);
-
-    // Technique
-    D3DXHANDLE techParallax = g_pEffect->GetTechniqueByName("Technique_ParallaxOcclusion");
-    g_pEffect->SetTechnique(techParallax);
-
-    UINT numPasses = 0;
-    g_pEffect->Begin(&numPasses, 0);
+    UINT passes = 0;
+    g_pEffect->Begin(&passes, 0);
     g_pEffect->BeginPass(0);
 
-    // サブセットごとにベースカラーを設定・描画
+    // サブセットごとにベースカラーを設定して描画
     for (DWORD i = 0; i < g_numMaterials; ++i)
     {
-        g_pEffect->SetTexture("g_texColor", g_textures[i]);
+        g_pEffect->SetTexture("g_baseTexture", g_textures[i]);
         g_pEffect->CommitChanges();
         g_pMesh->DrawSubset(i);
     }
